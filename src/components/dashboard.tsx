@@ -85,6 +85,73 @@ const severityStyle = {
   critical: "bg-[var(--danger-soft)] text-[var(--danger)]",
 };
 
+const exportColumns = [
+  "section",
+  "range",
+  "routing_applied",
+  "saved_view",
+  "generated_at",
+  "metric",
+  "value",
+  "provider_id",
+  "provider_name",
+  "provider_status",
+  "region",
+  "p95_ms",
+  "failure_rate",
+  "spend_usd",
+  "volume",
+  "incident_id",
+  "incident_title",
+  "severity",
+  "age",
+  "job_id",
+  "user",
+  "model_id",
+  "source",
+  "status",
+  "duration_ms",
+  "cost",
+  "retry_count",
+  "detail",
+] as const;
+
+type CsvValue = string | number | boolean | null | undefined;
+type CsvRow = Partial<Record<(typeof exportColumns)[number], CsvValue>>;
+
+function escapeCsvValue(value: CsvValue) {
+  const rawText = value == null ? "" : String(value);
+  const text = /^[=+\-@\t\r]/.test(rawText) ? `'${rawText}` : rawText;
+
+  if (/[",\n\r]/.test(text)) {
+    return `"${text.replaceAll('"', '""')}"`;
+  }
+
+  return text;
+}
+
+function buildCsv(rows: CsvRow[]) {
+  return [
+    exportColumns.join(","),
+    ...rows.map((row) =>
+      exportColumns.map((column) => escapeCsvValue(row[column])).join(","),
+    ),
+  ].join("\r\n");
+}
+
+function downloadCsv(filename: string, csv: string) {
+  const blob = new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
 export function Dashboard() {
   const [range, setRange] = useState<Range>("24h");
   const [providerView, setProviderView] = useState<ProviderView>("risk");
@@ -274,6 +341,141 @@ export function Dashboard() {
     }
   }
 
+  function handleExport() {
+    if (!data || !metrics) {
+      return;
+    }
+
+    const snapshotRows: CsvRow[] = [
+      {
+        section: "snapshot",
+        range,
+        routing_applied: routingApplied,
+        saved_view: savedView,
+        generated_at: data.generatedAt,
+        metric: "generated_at",
+        value: data.generatedAt,
+        detail: "Current visible SignalOps dashboard snapshot",
+      },
+      {
+        section: "snapshot",
+        range,
+        routing_applied: routingApplied,
+        saved_view: savedView,
+        generated_at: data.generatedAt,
+        metric: "total_generations",
+        value: metrics.totalVolume,
+      },
+      {
+        section: "snapshot",
+        range,
+        routing_applied: routingApplied,
+        saved_view: savedView,
+        generated_at: data.generatedAt,
+        metric: "provider_spend_usd",
+        value: metrics.totalSpend,
+      },
+      {
+        section: "snapshot",
+        range,
+        routing_applied: routingApplied,
+        saved_view: savedView,
+        generated_at: data.generatedAt,
+        metric: "weighted_failure_rate",
+        value: Number(metrics.weightedFailure.toFixed(2)),
+      },
+      {
+        section: "snapshot",
+        range,
+        routing_applied: routingApplied,
+        saved_view: savedView,
+        generated_at: data.generatedAt,
+        metric: "weighted_p95_ms",
+        value: Math.round(metrics.weightedP95),
+      },
+      {
+        section: "snapshot",
+        range,
+        routing_applied: routingApplied,
+        saved_view: savedView,
+        generated_at: data.generatedAt,
+        metric: "active_jobs",
+        value: metrics.activeJobs,
+      },
+      ...effectiveProviders.map((provider) => ({
+        section: "provider",
+        range,
+        routing_applied: routingApplied,
+        saved_view: savedView,
+        generated_at: data.generatedAt,
+        provider_id: provider.id,
+        provider_name: provider.name,
+        provider_status: provider.status,
+        region: provider.region,
+        p95_ms: provider.p95Ms,
+        failure_rate: provider.failureRate,
+        spend_usd: provider.spend,
+        volume: provider.volume,
+      })),
+      ...data.incidents.map((incident) => {
+        const provider = effectiveProviders.find(
+          (item) => item.id === incident.providerId,
+        );
+
+        return {
+          section: "incident",
+          range,
+          routing_applied: routingApplied,
+          saved_view: savedView,
+          generated_at: data.generatedAt,
+          provider_id: incident.providerId,
+          provider_name: provider?.name,
+          provider_status: provider?.status,
+          incident_id: incident.id,
+          incident_title: incident.title,
+          severity: incident.severity,
+          age: incident.age,
+          detail: incident.detail,
+        };
+      }),
+      ...affectedJobs.map((job) => {
+        const provider = effectiveProviders.find(
+          (item) => item.id === job.providerId,
+        );
+
+        return {
+          section: "affected_job",
+          range,
+          routing_applied: routingApplied,
+          saved_view: savedView,
+          generated_at: data.generatedAt,
+          provider_id: job.providerId,
+          provider_name: provider?.name,
+          provider_status: provider?.status,
+          status: job.status,
+          incident_id: selectedIncident?.id,
+          incident_title: selectedIncident?.title,
+          severity: selectedIncident?.severity,
+          job_id: job.id,
+          user: job.user,
+          model_id: job.modelId,
+          source: job.source,
+          duration_ms: job.durationMs,
+          cost: job.cost,
+          retry_count: job.retryCount,
+          detail: job.prompt,
+        };
+      }),
+    ];
+
+    const timestamp = new Date(data.generatedAt)
+      .toISOString()
+      .replaceAll(":", "-")
+      .replace(/\.\d{3}Z$/, "Z");
+
+    downloadCsv(`signalops-${range}-${timestamp}.csv`, buildCsv(snapshotRows));
+  }
+
   if (isLoading || !data || !metrics) {
     return (
       <main className="grid min-h-screen place-items-center bg-[var(--background)] text-[var(--text)]">
@@ -337,7 +539,10 @@ export function Dashboard() {
               <RefreshCcw className={cn("size-4", isFetching && "animate-spin")} />
               Refresh
             </button>
-            <button className="inline-flex h-10 min-w-0 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-[13px] font-medium text-[var(--text)] shadow-[var(--shadow-1)] hover:bg-[var(--surface-mute)]">
+            <button
+              onClick={handleExport}
+              className="inline-flex h-10 min-w-0 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-[13px] font-medium text-[var(--text)] shadow-[var(--shadow-1)] hover:bg-[var(--surface-mute)]"
+            >
               <Download className="size-4" />
               Export
             </button>
