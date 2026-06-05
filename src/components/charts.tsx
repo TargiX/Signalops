@@ -10,13 +10,11 @@ import {
   PieChart,
   Pie,
   Cell,
-  Sector,
   AreaChart,
   Area,
   ScatterChart,
   Scatter,
   ZAxis,
-  ResponsiveContainer,
 } from "recharts";
 import { useEffect, useRef, useState } from "react";
 import type { TimeBucket, Provider } from "@/lib/mock-data";
@@ -31,7 +29,16 @@ const tooltipStyle = {
   color: "var(--text)",
 };
 
-function GlowingCursor({ x, width, height, tone = "accent" }: any) {
+type GlowTone = "accent" | "warning";
+
+type GlowingCursorProps = {
+  x?: number;
+  width?: number;
+  height?: number;
+  tone?: GlowTone;
+};
+
+function GlowingCursor({ x, width = 0, height = 0, tone = "accent" }: GlowingCursorProps) {
   if (typeof x !== "number") return null;
   
   return (
@@ -167,33 +174,7 @@ function useChartWidth() {
   return [ref, width] as const;
 }
 
-const renderActiveShape = (props: any) => {
-  const { cx, cy, innerRadius, outerRadius, startAngle, endAngle, fill, payload, percent, value } = props;
-
-  return (
-    <g>
-      <text x={cx} y={cy - 10} dy={8} textAnchor="middle" fill="var(--text)" fontSize={16} fontWeight={600}>
-        {payload.name}
-      </text>
-      <text x={cx} y={cy + 15} dy={8} textAnchor="middle" fill="var(--text-dim)" fontSize={13}>
-        {`${(percent * 100).toFixed(1)}%`}
-      </text>
-      <Sector
-        cx={cx}
-        cy={cy}
-        innerRadius={innerRadius}
-        outerRadius={outerRadius + 8}
-        startAngle={startAngle}
-        endAngle={endAngle}
-        fill={fill}
-        style={{ filter: "drop-shadow(0 4px 12px rgba(0,0,0,0.15))", transition: "all 0.3s ease" }}
-      />
-    </g>
-  );
-};
-
 export function SpendDonutChart({ data }: { data: Provider[] }) {
-  const [activeIndex, setActiveIndex] = useState(0);
   const [containerRef, width] = useChartWidth();
 
   return (
@@ -201,15 +182,12 @@ export function SpendDonutChart({ data }: { data: Provider[] }) {
       {width > 0 ? (
         <PieChart width={width} height={254}>
           <Pie
-            {...({ activeIndex } as any)}
-            activeShape={renderActiveShape}
             data={data}
             cx="50%"
             cy="50%"
             innerRadius={70}
             outerRadius={95}
             dataKey="spend"
-            onMouseEnter={(_, index) => setActiveIndex(index)}
             stroke="var(--surface)"
             strokeWidth={3}
             isAnimationActive={false}
