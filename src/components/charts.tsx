@@ -19,6 +19,7 @@ import {
 import { useEffect, useRef, useState } from "react";
 import type { TimeBucket, Provider } from "@/lib/mock-data";
 import { formatCurrency, formatMs } from "@/lib/utils";
+import { motion, AnimatePresence } from "framer-motion";
 
 const tooltipStyle = {
   background: "color-mix(in oklch, var(--surface) 95%, transparent)",
@@ -176,28 +177,94 @@ function useChartWidth() {
 
 export function SpendDonutChart({ data }: { data: Provider[] }) {
   const [containerRef, width] = useChartWidth();
+  const [activeIndex, setActiveIndex] = useState<number | null>(null);
+
+  const totalSpend = data.reduce((sum, item) => sum + item.spend, 0);
+  const activeItem = activeIndex !== null ? data[activeIndex] : null;
 
   return (
-    <div ref={containerRef} className="h-[254px] min-w-0 flex items-center justify-center">
-      {width > 0 ? (
-        <PieChart width={width} height={254}>
-          <Pie
-            data={data}
-            cx="50%"
-            cy="50%"
-            innerRadius={70}
-            outerRadius={95}
-            dataKey="spend"
-            stroke="var(--surface)"
-            strokeWidth={3}
-            isAnimationActive={false}
-          >
-            {data.map((entry) => (
-              <Cell key={entry.id} fill={entry.color} />
-            ))}
-          </Pie>
-        </PieChart>
-      ) : null}
+    <div ref={containerRef} className="relative flex h-[254px] min-w-0 items-center justify-center">
+      {width > 0 && (
+        <>
+          <PieChart width={width} height={254}>
+            <Pie
+              data={data}
+              cx="50%"
+              cy="50%"
+              innerRadius={76}
+              outerRadius={96}
+              dataKey="spend"
+              stroke="var(--surface)"
+              strokeWidth={3}
+              isAnimationActive={true}
+              animationBegin={0}
+              animationDuration={800}
+              animationEasing="ease-out"
+              paddingAngle={2}
+            >
+              {data.map((entry, index) => (
+                <Cell 
+                  key={entry.id} 
+                  fill={entry.color} 
+                  style={{ 
+                    outline: "none", 
+                    cursor: "pointer",
+                    filter: activeIndex === index ? `drop-shadow(0 0 8px ${entry.color}80)` : "none",
+                    transform: activeIndex === index ? "scale(1.04)" : "scale(1)",
+                    transformOrigin: "center",
+                    transition: "all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1)"
+                  }}
+                  onMouseEnter={() => setActiveIndex(index)}
+                  onMouseLeave={() => setActiveIndex(null)}
+                />
+              ))}
+            </Pie>
+          </PieChart>
+          
+          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
+            <AnimatePresence mode="wait">
+              {activeItem ? (
+                <motion.div
+                  key={activeItem.id}
+                  initial={{ opacity: 0, y: 4, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -4, scale: 0.95 }}
+                  transition={{ duration: 0.15 }}
+                  className="flex flex-col items-center"
+                >
+                  <span className="mb-0.5 text-[13px] font-medium text-[var(--text-dim)]">
+                    {activeItem.name}
+                  </span>
+                  <span className="text-xl font-bold tracking-tight text-[var(--text)]">
+                    {formatCurrency(activeItem.spend)}
+                  </span>
+                  <span 
+                    className="mt-1 rounded-full px-2 py-0.5 text-[11px] font-semibold" 
+                    style={{ color: activeItem.color, backgroundColor: `${activeItem.color}15` }}
+                  >
+                    {((activeItem.spend / totalSpend) * 100).toFixed(1)}%
+                  </span>
+                </motion.div>
+              ) : (
+                <motion.div
+                  key="total"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="flex flex-col items-center"
+                >
+                  <span className="mb-0.5 text-[13px] font-medium text-[var(--text-dim)]">
+                    Total Spend
+                  </span>
+                  <span className="text-xl font-bold tracking-tight text-[var(--text)]">
+                    {formatCurrency(totalSpend)}
+                  </span>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        </>
+      )}
     </div>
   );
 }
