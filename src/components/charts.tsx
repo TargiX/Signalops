@@ -346,6 +346,7 @@ export function PerformanceScatterChart({ data }: { data: Provider[] }) {
           <Tooltip 
             cursor={{ strokeDasharray: '3 3' }} 
             contentStyle={tooltipStyle}
+            isAnimationActive={false}
             formatter={(value, name) => [
               name === "Latency" ? formatMs(Number(value)) : name === "Failure Rate" ? `${value}%` : value, 
               name
