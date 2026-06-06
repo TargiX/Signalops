@@ -18,7 +18,7 @@ import {
 } from "recharts";
 import { useEffect, useRef, useState } from "react";
 import type { TimeBucket, Provider } from "@/lib/mock-data";
-import { formatCurrency, formatMs } from "@/lib/utils";
+import { formatCurrency, formatMs, cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 
 const tooltipStyle = {
@@ -312,9 +312,33 @@ export function TrafficAreaChart({ data }: { data: TimeBucket[] }) {
 
 export function PerformanceScatterChart({ data }: { data: Provider[] }) {
   const [containerRef, width] = useChartWidth();
+  const [isFirstHover, setIsFirstHover] = useState(true);
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const handleMouseEnter = () => {
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    // Keep transition disabled for the first 50ms so the initial jump is instant
+    timeoutRef.current = setTimeout(() => {
+      setIsFirstHover(false);
+    }, 50);
+  };
+
+  const handleMouseLeave = () => {
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    // Reset so the next time user enters the chart, it's instant again
+    setIsFirstHover(true);
+  };
 
   return (
-    <div ref={containerRef} className="h-[254px] min-w-0">
+    <div
+      ref={containerRef}
+      className={cn(
+        "h-[254px] min-w-0",
+        isFirstHover && "[&_.recharts-tooltip-wrapper]:!transition-none"
+      )}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+    >
       {width > 0 ? (
         <ScatterChart
           height={254}
@@ -346,7 +370,7 @@ export function PerformanceScatterChart({ data }: { data: Provider[] }) {
           <Tooltip 
             cursor={{ strokeDasharray: '3 3' }} 
             contentStyle={tooltipStyle}
-            isAnimationActive={false}
+            isAnimationActive={true}
             formatter={(value, name) => [
               name === "Latency" ? formatMs(Number(value)) : name === "Failure Rate" ? `${value}%` : value, 
               name
