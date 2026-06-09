@@ -68,6 +68,22 @@ export type Incident = {
   detail: string;
 };
 
+export type RoutingGuard = "latency" | "failure";
+
+export type RoutingRule = {
+  id: string;
+  incidentId: string;
+  providerId: ProviderId;
+  guard: RoutingGuard;
+  trafficShare: number;
+  status: "optimistic" | "active";
+  appliedAt: string;
+  movedJobs: number;
+  p95Delta: number;
+  failureDelta: number;
+  spendDelta: number;
+};
+
 export type Consumer = {
   id: string;
   name: string;
@@ -86,6 +102,7 @@ export type OpsSnapshot = {
   timeline: TimeBucket[];
   incidents: Incident[];
   consumers: Consumer[];
+  activeRoutingRule: RoutingRule | null;
 };
 
 const providers: Provider[] = [
@@ -364,6 +381,43 @@ const consumers: Consumer[] = [
   },
 ];
 
+const routingRules = new Map<string, RoutingRule>();
+
+function buildRoutingRule({
+  incidentId,
+  providerId,
+  guard,
+  trafficShare,
+  status,
+}: {
+  incidentId: string;
+  providerId: ProviderId;
+  guard: RoutingGuard;
+  trafficShare: number;
+  status: RoutingRule["status"];
+}) {
+  const provider = providers.find((item) => item.id === providerId);
+  if (!provider) {
+    throw new Error("Unknown provider");
+  }
+
+  const share = trafficShare / 100;
+
+  return {
+    id: `rule_${incidentId}_${guard}_${trafficShare}`,
+    incidentId,
+    providerId,
+    guard,
+    trafficShare,
+    status,
+    appliedAt: new Date().toISOString(),
+    movedJobs: Math.round(provider.volume * share),
+    p95Delta: Math.round(provider.p95Ms * 0.34 * share),
+    failureDelta: Number((provider.failureRate * 0.52 * share).toFixed(1)),
+    spendDelta: Number((provider.spend * 0.18 * share).toFixed(2)),
+  } satisfies RoutingRule;
+}
+
 export function getOpsSnapshot(range: "24h" | "7d" | "30d") {
   const multiplier = range === "24h" ? 1 : range === "7d" ? 5.8 : 18.4;
 
@@ -387,6 +441,7 @@ export function getOpsSnapshot(range: "24h" | "7d" | "30d") {
       spend: Number((consumer.spend * multiplier).toFixed(2)),
       generations: Math.round(consumer.generations * multiplier),
     })),
+    activeRoutingRule: routingRules.get(range) ?? null,
   } satisfies OpsSnapshot;
 }
 
@@ -394,4 +449,30 @@ export async function fetchOpsSnapshot(range: "24h" | "7d" | "30d") {
   await new Promise((resolve) => setTimeout(resolve, 360));
 
   return getOpsSnapshot(range);
+}
+
+export function createOptimisticRoutingRule(input: {
+  incidentId: string;
+  providerId: ProviderId;
+  guard: RoutingGuard;
+  trafficShare: number;
+}) {
+  return buildRoutingRule({ ...input, status: "optimistic" });
+}
+
+export async function applyRoutingRule(
+  range: "24h" | "7d" | "30d",
+  input: {
+    incidentId: string;
+    providerId: ProviderId;
+    guard: RoutingGuard;
+    trafficShare: number;
+  },
+) {
+  await new Promise((resolve) => setTimeout(resolve, 520));
+
+  const rule = buildRoutingRule({ ...input, status: "active" });
+  routingRules.set(range, rule);
+
+  return rule;
 }

@@ -99,7 +99,7 @@ export function IncidentDetail({ incidentId }: { incidentId: string }) {
           <AlertTriangle className="mx-auto size-8 text-[var(--warning)]" />
           <h1 className="mt-4 text-xl font-semibold">Incident not found</h1>
           <Link
-            href="/"
+            href="/cockpit"
             className="mt-4 inline-flex text-sm font-semibold text-[var(--accent)] hover:underline"
           >
             Back to cockpit
@@ -123,7 +123,7 @@ export function IncidentDetail({ incidentId }: { incidentId: string }) {
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div className="min-w-0">
               <Link
-                href="/"
+                href="/cockpit"
                 className="inline-flex items-center gap-2 text-sm font-medium text-[var(--text-dim)] hover:text-[var(--text)]"
               >
                 <ArrowLeft className="size-4" />

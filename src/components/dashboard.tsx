@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
   AlertTriangle,
@@ -41,12 +41,24 @@ import {
   type TriggerMode,
 } from "@/components/incident-replay";
 import { KpiCard } from "@/components/kpi-card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+} from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  applyRoutingRule,
+  createOptimisticRoutingRule,
   fetchOpsSnapshot,
   type Generation,
   type GenerationStatus,
   type Incident,
   type Model,
+  type OpsSnapshot,
   type Provider,
   type ProviderId,
 } from "@/lib/mock-data";
@@ -165,10 +177,10 @@ function downloadCsv(filename: string, csv: string) {
 }
 
 export function Dashboard() {
+  const queryClient = useQueryClient();
   const [range, setRange] = useState<Range>("24h");
   const [providerView, setProviderView] = useState<ProviderView>("risk");
   const [modelView, setModelView] = useState<ModelView>("matrix");
-  const [routingApplied, setRoutingApplied] = useState(false);
   const [savedView, setSavedView] = useState<SavedView>("ops");
   const [selectedIncidentId, setSelectedIncidentId] = useState("inc_411");
   const [queueFocusProviderId, setQueueFocusProviderId] = useState<
@@ -189,54 +201,54 @@ export function Dashboard() {
     queryFn: () => fetchOpsSnapshot(range),
   });
 
+  const activeRoutingRule = data?.activeRoutingRule ?? null;
+  const routingApplied = Boolean(activeRoutingRule);
+
   const effectiveProviders = useMemo(() => {
-    if (!data || !routingApplied) {
+    if (!data || !activeRoutingRule) {
       return data?.providers ?? [];
     }
 
     return data.providers.map((provider) => {
-      if (provider.id === "alibaba") {
+      if (provider.id === activeRoutingRule.providerId) {
         return {
           ...provider,
           status: "degraded" as const,
-          p95Ms: Math.round(provider.p95Ms * 0.62),
-          failureRate: Number((provider.failureRate * 0.42).toFixed(1)),
-          spend: Number((provider.spend * 0.74).toFixed(2)),
-        };
-      }
-
-      if (provider.id === "fal") {
-        return {
-          ...provider,
-          p95Ms: Math.round(provider.p95Ms * 0.78),
-          failureRate: Number((provider.failureRate * 0.55).toFixed(1)),
-          spend: Number((provider.spend * 0.86).toFixed(2)),
+          p95Ms: Math.max(900, provider.p95Ms - activeRoutingRule.p95Delta),
+          failureRate: Number(
+            Math.max(0.1, provider.failureRate - activeRoutingRule.failureDelta).toFixed(1),
+          ),
+          spend: Number(
+            Math.max(0, provider.spend - activeRoutingRule.spendDelta).toFixed(2),
+          ),
         };
       }
 
       if (provider.id === "google") {
         return {
           ...provider,
-          volume: Math.round(provider.volume * 1.18),
+          volume: provider.volume + activeRoutingRule.movedJobs,
         };
       }
 
       return provider;
     });
-  }, [data, routingApplied]);
+  }, [activeRoutingRule, data]);
 
   const effectiveTimeline = useMemo(() => {
-    if (!data || !routingApplied) {
+    if (!data || !activeRoutingRule) {
       return data?.timeline ?? [];
     }
 
+    const share = activeRoutingRule.trafficShare / 100;
+
     return data.timeline.map((bucket, index) => ({
       ...bucket,
-      failures: Math.max(1, Math.round(bucket.failures * 0.48)),
-      latency: Math.round(bucket.latency * (index > 16 ? 0.78 : 0.92)),
-      spend: Number((bucket.spend * 0.88).toFixed(2)),
+      failures: Math.max(1, Math.round(bucket.failures * (1 - 0.44 * share))),
+      latency: Math.round(bucket.latency * (index > 16 ? 1 - 0.28 * share : 1 - 0.12 * share)),
+      spend: Number((bucket.spend * (1 - 0.14 * share)).toFixed(2)),
     }));
-  }, [data, routingApplied]);
+  }, [activeRoutingRule, data]);
 
   const metrics = useMemo(() => {
     if (!data) {
@@ -330,6 +342,31 @@ export function Dashboard() {
     };
   }, [selectedProvider, trafficShare]);
 
+  function setReplayRoutingRule(
+    scenario: (typeof replayScenarios)[number],
+    step: (typeof replayScenarios)[number]["steps"][number],
+  ) {
+    queryClient.setQueryData<OpsSnapshot>(["ops-snapshot", range], (snapshot) => {
+      if (!snapshot) {
+        return snapshot;
+      }
+
+      if (!step.state.routingApplied) {
+        return { ...snapshot, activeRoutingRule: null };
+      }
+
+      return {
+        ...snapshot,
+        activeRoutingRule: createOptimisticRoutingRule({
+          incidentId: step.state.selectedIncidentId,
+          providerId: scenario.providerId,
+          guard: step.state.triggerMode,
+          trafficShare: step.state.trafficShare,
+        }),
+      };
+    });
+  }
+
   function goToReplayStep(scenarioId: string, index: number) {
     const scenario = replayScenarios.find((item) => item.id === scenarioId);
 
@@ -349,7 +386,7 @@ export function Dashboard() {
     setQueueFocusStatus(step.state.queueFocusStatus);
     setTriggerMode(step.state.triggerMode);
     setTrafficShare(step.state.trafficShare);
-    setRoutingApplied(step.state.routingApplied);
+    setReplayRoutingRule(scenario, step);
     setSelectedGeneration(null);
     setReplayScenarioId(scenarioId);
     setReplayStepIndex(boundedIndex);
@@ -374,9 +411,60 @@ export function Dashboard() {
     setQueueFocusStatus(replayBaseline.queueFocusStatus);
     setTriggerMode(replayBaseline.triggerMode);
     setTrafficShare(replayBaseline.trafficShare);
-    setRoutingApplied(replayBaseline.routingApplied);
+    queryClient.setQueryData<OpsSnapshot>(["ops-snapshot", range], (snapshot) =>
+      snapshot ? { ...snapshot, activeRoutingRule: null } : snapshot,
+    );
     setSelectedGeneration(null);
   }
+
+  const applyRuleMutation = useMutation({
+    mutationKey: ["routing-rule", range],
+    mutationFn: async () => {
+      if (!selectedIncident || !selectedProvider) {
+        throw new Error("No incident selected");
+      }
+
+      return applyRoutingRule(range, {
+        incidentId: selectedIncident.id,
+        providerId: selectedProvider.id,
+        guard: triggerMode,
+        trafficShare,
+      });
+    },
+    onMutate: async () => {
+      if (!selectedIncident || !selectedProvider) {
+        return undefined;
+      }
+
+      await queryClient.cancelQueries({ queryKey: ["ops-snapshot", range] });
+      const previous = queryClient.getQueryData<OpsSnapshot>(["ops-snapshot", range]);
+      const optimisticRule = createOptimisticRoutingRule({
+        incidentId: selectedIncident.id,
+        providerId: selectedProvider.id,
+        guard: triggerMode,
+        trafficShare,
+      });
+
+      queryClient.setQueryData<OpsSnapshot>(["ops-snapshot", range], (snapshot) =>
+        snapshot ? { ...snapshot, activeRoutingRule: optimisticRule } : snapshot,
+      );
+
+      return { previous };
+    },
+    onError: (_error, _variables, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(["ops-snapshot", range], context.previous);
+      }
+    },
+    onSuccess: (rule) => {
+      queryClient.setQueryData<OpsSnapshot>(["ops-snapshot", range], (snapshot) =>
+        snapshot ? { ...snapshot, activeRoutingRule: rule } : snapshot,
+      );
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["ops-snapshot", range] });
+    },
+  });
 
   function activateSavedView(view: SavedView) {
     setSavedView(view);
@@ -543,7 +631,8 @@ export function Dashboard() {
       <main className="grid min-h-screen place-items-center bg-[var(--background)] text-[var(--text)]">
         <div className="flex items-center gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-5 py-4 shadow-[var(--shadow-1)]">
           <Loader2 className="size-5 animate-spin text-[var(--accent)]" />
-          <span className="text-sm text-[var(--text-dim)]">Hydrating ops snapshot</span>
+          <Skeleton className="h-4 w-44" />
+          <span className="sr-only">Hydrating ops snapshot</span>
         </div>
       </main>
     );
@@ -579,7 +668,7 @@ export function Dashboard() {
               {routingApplied ? (
                 <div className="mt-3 inline-flex items-center gap-2 rounded-full bg-[var(--success-soft)] px-3 py-1 text-[12.5px] font-medium text-[var(--success)]">
                   <span className="size-1.5 rounded-full bg-[var(--success)]" />
-                  Routing rule active: risky jobs drained from Alibaba and fal.ai.
+                  Routing rule active: risky jobs drained from {selectedProvider?.name ?? "the provider"}.
                 </div>
               ) : null}
             </div>
@@ -714,37 +803,44 @@ export function Dashboard() {
 
         {selectedIncident && selectedProvider ? (
           <div id="replay-investigation" className="scroll-mt-4">
-          <InvestigationWorkbench
-            affectedJobs={affectedJobs}
-            incidents={data.incidents}
-            onApplyRule={() => setRoutingApplied(true)}
-            onFocusQueue={() => {
-              setSavedView("triage");
-              setQueueFocusProviderId(selectedProvider.id);
-              setQueueFocusStatus("all");
-            }}
-            onIncidentSelect={(incidentId) => {
-              const incident = data.incidents.find(
-                (item) => item.id === incidentId,
-              );
+            <InvestigationWorkbench
+              affectedJobs={affectedJobs}
+              incidents={data.incidents}
+              onApplyRule={() => applyRuleMutation.mutate()}
+              onFocusQueue={() => {
+                setSavedView("triage");
+                setQueueFocusProviderId(selectedProvider.id);
+                setQueueFocusStatus("all");
+              }}
+              onIncidentSelect={(incidentId) => {
+                const incident = data.incidents.find(
+                  (item) => item.id === incidentId,
+                );
 
-              setSelectedIncidentId(incidentId);
-              setSelectedGeneration(null);
-              if (savedView === "triage" && incident) {
-                setQueueFocusProviderId(incident.providerId);
+                setSelectedIncidentId(incidentId);
+                setSelectedGeneration(null);
+                if (savedView === "triage" && incident) {
+                  setQueueFocusProviderId(incident.providerId);
+                }
+              }}
+              onJobSelect={setSelectedGeneration}
+              provider={selectedProvider}
+              ruleError={
+                applyRuleMutation.error instanceof Error
+                  ? applyRuleMutation.error.message
+                  : null
               }
-            }}
-            onJobSelect={setSelectedGeneration}
-            provider={selectedProvider}
-            routingApplied={routingApplied}
-            ruleImpact={ruleImpact}
-            selectedGeneration={selectedGeneration}
-            selectedIncident={selectedIncident}
-            trafficShare={trafficShare}
-            triggerMode={triggerMode}
-            onTrafficShareChange={setTrafficShare}
-            onTriggerModeChange={setTriggerMode}
-          />
+              routingApplied={routingApplied}
+              routingRuleStatus={activeRoutingRule?.status ?? null}
+              rulePending={applyRuleMutation.isPending}
+              ruleImpact={ruleImpact}
+              selectedGeneration={selectedGeneration}
+              selectedIncident={selectedIncident}
+              trafficShare={trafficShare}
+              triggerMode={triggerMode}
+              onTrafficShareChange={setTrafficShare}
+              onTriggerModeChange={setTriggerMode}
+            />
           </div>
         ) : null}
 
@@ -834,22 +930,24 @@ export function Dashboard() {
                   </Link>
                 </motion.div>
               ))}
-              <motion.button
-                onClick={() => setRoutingApplied(true)}
-                disabled={routingApplied}
-                whileHover={routingApplied ? {} : { scale: 1.015 }}
-                whileTap={routingApplied ? {} : { scale: 0.97 }}
-                transition={{ type: "spring", stiffness: 400, damping: 25 }}
-                className={cn(
-                  "inline-flex h-10 w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-[var(--border)] text-sm font-medium transition-colors",
-                  routingApplied
-                    ? "bg-[var(--success-soft)] text-[var(--success)] shadow-[var(--shadow-1)]"
-                    : "bg-[var(--accent)] [color:white] hover:bg-[var(--accent-hover)] shadow-md",
-                )}
+              <Button
+                onClick={() => applyRuleMutation.mutate()}
+                disabled={routingApplied || applyRuleMutation.isPending}
+                className="h-10 w-full shadow-md"
               >
-                <GitBranch className="size-4" />
-                {routingApplied ? "Routing rule active" : "Apply routing rule"}
-              </motion.button>
+                {applyRuleMutation.isPending ? (
+                  <Loader2 data-icon="inline-start" className="animate-spin" />
+                ) : routingApplied ? (
+                  <CheckCircle2 data-icon="inline-start" />
+                ) : (
+                  <GitBranch data-icon="inline-start" />
+                )}
+                {applyRuleMutation.isPending
+                  ? "Applying rule"
+                  : routingApplied
+                    ? "Routing rule active"
+                    : "Apply routing rule"}
+              </Button>
             </motion.div>
           </Panel>
         </section>
@@ -1002,7 +1100,10 @@ function InvestigationWorkbench({
   onIncidentSelect,
   onJobSelect,
   provider,
+  ruleError,
   routingApplied,
+  routingRuleStatus,
+  rulePending,
   ruleImpact,
   selectedGeneration,
   selectedIncident,
@@ -1018,7 +1119,10 @@ function InvestigationWorkbench({
   onIncidentSelect: (incidentId: string) => void;
   onJobSelect: (job: Generation) => void;
   provider: Provider;
+  ruleError: string | null;
   routingApplied: boolean;
+  routingRuleStatus: "optimistic" | "active" | null;
+  rulePending: boolean;
   ruleImpact: {
     jobs: number;
     p95Delta: number;
@@ -1132,52 +1236,54 @@ function InvestigationWorkbench({
           ))}
         </div>
 
-        <button
+        <Button
+          variant="outline"
           onClick={onFocusQueue}
-          className="mt-4 inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm font-medium text-[var(--text)] shadow-[var(--shadow-1)] transition-all hover:bg-[var(--surface-mute)] active:scale-95"
+          className="mt-4 w-full shadow-[var(--shadow-1)]"
         >
-          <SlidersHorizontal className="size-4" />
+          <SlidersHorizontal data-icon="inline-start" />
           Focus queue on this provider
-        </button>
+        </Button>
       </Panel>
 
       <Panel title="Routing Rule Builder" eyebrow="Draft and preview">
-        <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-mute)] p-3">
-          <div className="text-xs font-medium uppercase tracking-[0.03em] text-[var(--mute)]">
-            If
-          </div>
-          <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-[var(--text)]">
-            <RuleChip>{provider.name}</RuleChip>
-            <RuleChip>
-              {triggerMode === "latency" ? "p95 > 12s" : "failures > 5%"}
-            </RuleChip>
-            <RuleChip>{trafficShare}% traffic</RuleChip>
-          </div>
-        </div>
+        <Card size="sm" className="border border-[var(--border)] bg-[var(--surface-mute)] shadow-none ring-0">
+          <CardHeader>
+            <CardDescription className="text-xs font-medium uppercase tracking-[0.03em] text-[var(--mute)]">
+              If
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex flex-wrap items-center gap-2 text-sm text-[var(--text)]">
+              <RuleChip>{provider.name}</RuleChip>
+              <RuleChip>
+                {triggerMode === "latency" ? "p95 > 12s" : "failures > 5%"}
+              </RuleChip>
+              <RuleChip>{trafficShare}% traffic</RuleChip>
+              {routingRuleStatus ? (
+                <Badge variant={routingRuleStatus === "active" ? "default" : "secondary"}>
+                  {routingRuleStatus === "active" ? "active" : "applying"}
+                </Badge>
+              ) : null}
+            </div>
+          </CardContent>
+        </Card>
 
         <div className="mt-4 grid grid-cols-2 gap-2">
-          <button
+          <Button
+            variant={triggerMode === "latency" ? "default" : "outline"}
             onClick={() => onTriggerModeChange("latency")}
-            className={cn(
-              "rounded-lg border px-3 py-2 text-sm font-medium",
-              triggerMode === "latency"
-                ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]"
-                : "border-[var(--border)] text-[var(--text-dim)]",
-            )}
+            disabled={rulePending || routingApplied}
           >
             Latency guard
-          </button>
-          <button
+          </Button>
+          <Button
+            variant={triggerMode === "failure" ? "default" : "outline"}
             onClick={() => onTriggerModeChange("failure")}
-            className={cn(
-              "rounded-lg border px-3 py-2 text-sm font-medium",
-              triggerMode === "failure"
-                ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]"
-                : "border-[var(--border)] text-[var(--text-dim)]",
-            )}
+            disabled={rulePending || routingApplied}
           >
             Failure guard
-          </button>
+          </Button>
         </div>
 
         <label className="mt-4 block">
@@ -1205,23 +1311,26 @@ function InvestigationWorkbench({
           <MetricTile label="cost saved" value={formatCurrency(ruleImpact.spendDelta)} />
         </div>
 
-        <button
+        <Button
           onClick={onApplyRule}
-          disabled={routingApplied}
-          className={cn(
-            "mt-4 inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg border text-sm font-medium shadow-[var(--shadow-1)] transition-all active:scale-[0.98]",
-            routingApplied
-              ? "border-[var(--border)] bg-[var(--success-soft)] text-[var(--success)]"
-              : "border-[var(--accent)] bg-[var(--accent)] [color:white] hover:bg-[var(--accent-hover)] hover:shadow-md",
-          )}
+          disabled={routingApplied || rulePending}
+          className="mt-4 w-full shadow-[var(--shadow-1)]"
         >
-          {routingApplied ? (
-            <CheckCircle2 className="size-4" />
+          {rulePending ? (
+            <Loader2 data-icon="inline-start" className="animate-spin" />
+          ) : routingApplied ? (
+            <CheckCircle2 data-icon="inline-start" />
           ) : (
-            <GitBranch className="size-4" />
+            <GitBranch data-icon="inline-start" />
           )}
-          {routingApplied ? "Rule simulated" : "Simulate rule impact"}
-        </button>
+          {rulePending ? "Applying rule" : routingApplied ? "Rule active" : "Simulate rule impact"}
+        </Button>
+
+        {ruleError ? (
+          <div className="mt-3 rounded-lg border border-[var(--danger-soft)] bg-[var(--danger-soft)] px-3 py-2 text-xs font-medium text-[var(--danger)]">
+            {ruleError}
+          </div>
+        ) : null}
 
         {selectedGeneration ? (
           <div className="mt-4 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3">
@@ -1246,9 +1355,9 @@ function InvestigationWorkbench({
 
 function RuleChip({ children }: { children: React.ReactNode }) {
   return (
-    <span className="rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1 font-medium">
+    <Badge variant="outline" className="h-7 rounded-md bg-[var(--surface)] text-sm font-medium">
       {children}
-    </span>
+    </Badge>
   );
 }
 

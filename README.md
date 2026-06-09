@@ -5,13 +5,14 @@ SignalOps is a React dashboard for operating AI image-generation products. It is
 ## What It Demonstrates
 
 - A custom virtualized data grid built with TanStack Table and TanStack Virtual.
-- Server-state style data loading with TanStack Query.
+- Server-state style data loading with TanStack Query, including optimistic routing-rule mutations, rollback, and cache invalidation.
 - 10,000 synthetic generation jobs with only the visible rows mounted.
 - Provider health, routing risk, spend, latency, and failure-rate analysis.
 - Saved ops views for overview, provider triage, and cost review.
 - A selectable incident investigation flow with affected jobs, job detail selection, and queue focus.
 - A routing rule builder with trigger modes, traffic-drain slider, and simulated impact on jobs, p95, failures, and cost.
-- A bespoke Soft Light design system with Inter, JetBrains Mono, warm surfaces, subtle borders, and muted semantic status colors.
+- A product entry screen at `/` that frames the control-plane workflow before sending users into `/cockpit`.
+- A bespoke Soft Light design system backed by source-owned shadcn primitives, Inter, JetBrains Mono, warm surfaces, subtle borders, and muted semantic status colors.
 
 ## Stack
 
@@ -22,6 +23,7 @@ SignalOps is a React dashboard for operating AI image-generation products. It is
 - TanStack Query
 - TanStack Table
 - TanStack Virtual
+- shadcn/ui
 - Recharts
 - Lucide React
 
@@ -48,6 +50,12 @@ For a fast portfolio review, the dashboard opens with a **Guided incident replay
 3. Use **Back**/**Next step** to move, click any step chip to jump, and **Finish replay** (or **Exit replay**) to restore the clean baseline.
 
 Each step also surfaces a short "technical proof" line calling out what it exercises: TanStack Query hydration, TanStack Table + Virtual filtering, fully controlled rule-builder state, derived-memo chart re-renders, and the snapshot CSV export. Loading and error states are untouched — the rail only orchestrates state the user could set by hand.
+
+## Routes
+
+- `/` opens the product overview and operating model.
+- `/cockpit` opens the live operations dashboard.
+- `/incidents/inc_411` opens an incident investigation route.
 
 ## Portfolio Notes
 

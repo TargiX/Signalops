@@ -315,29 +315,29 @@ export function PerformanceScatterChart({ data }: { data: Provider[] }) {
   const [isFirstHover, setIsFirstHover] = useState(true);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  const handleMouseEnter = () => {
+  const handlePointEnter = () => {
+    // When hovering a point, wait 50ms before enabling transitions
+    // This allows the initial tooltip placement to jump instantly
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    // Keep transition disabled for the first 50ms so the initial jump is instant
     timeoutRef.current = setTimeout(() => {
       setIsFirstHover(false);
     }, 50);
   };
 
-  const handleMouseLeave = () => {
+  const handleChartLeave = () => {
+    // When leaving the chart entirely, reset so next point hover is instant
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    // Reset so the next time user enters the chart, it's instant again
     setIsFirstHover(true);
   };
 
   return (
-    <div
-      ref={containerRef}
+    <div 
+      ref={containerRef} 
       className={cn(
         "h-[254px] min-w-0",
         isFirstHover && "[&_.recharts-tooltip-wrapper]:!transition-none"
       )}
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={handleMouseLeave}
+      onMouseLeave={handleChartLeave}
     >
       {width > 0 ? (
         <ScatterChart
@@ -377,7 +377,14 @@ export function PerformanceScatterChart({ data }: { data: Provider[] }) {
             ]}
           />
           {data.map((entry) => (
-            <Scatter key={entry.id} name={entry.name} data={[entry]} fill={entry.color} opacity={0.8} />
+            <Scatter 
+              key={entry.id} 
+              name={entry.name} 
+              data={[entry]} 
+              fill={entry.color} 
+              opacity={0.8}
+              onMouseEnter={handlePointEnter}
+            />
           ))}
         </ScatterChart>
       ) : null}
