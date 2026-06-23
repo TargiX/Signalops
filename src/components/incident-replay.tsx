@@ -7,10 +7,12 @@ import {
   Clock3,
   Download,
   Gauge,
+  Link2,
   Sparkles,
   SlidersHorizontal,
   Target,
 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import type { LucideIcon } from "lucide-react";
 import type { GenerationStatus, ProviderId } from "@/lib/mock-data";
@@ -395,6 +397,54 @@ function ScenarioLauncher({
   );
 }
 
+function CopyLinkButton() {
+  const [copied, setCopied] = useState(false);
+  const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (resetTimer.current) {
+        clearTimeout(resetTimer.current);
+      }
+    };
+  }, []);
+
+  const handleCopy = async () => {
+    if (typeof window === "undefined" || !navigator.clipboard) {
+      return;
+    }
+
+    try {
+      // The dashboard keeps window.location in sync with the active step, so
+      // the current URL is already the exact shareable beat to hand off.
+      await navigator.clipboard.writeText(window.location.href);
+      setCopied(true);
+      if (resetTimer.current) {
+        clearTimeout(resetTimer.current);
+      }
+      resetTimer.current = setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard unavailable (permissions/unsupported); ignore silently.
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      title="Copy a shareable link to this replay step"
+      className="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2.5 text-[11.5px] font-medium text-[var(--text-dim)] transition-colors hover:bg-[var(--surface-mute)]"
+    >
+      {copied ? (
+        <CheckCircle2 className="size-3.5 text-[var(--success)]" />
+      ) : (
+        <Link2 className="size-3.5" />
+      )}
+      {copied ? "Copied" : "Copy link"}
+    </button>
+  );
+}
+
 function ReplayPlayer({
   scenario,
   stepIndex,
@@ -425,9 +475,12 @@ function ReplayPlayer({
         <span className="text-[12.5px] font-semibold text-[var(--text)]">
           {scenario.name}
         </span>
-        <span className="font-mono text-xs text-[var(--mute)]">
-          Step {stepIndex + 1} of {total}
-        </span>
+        <div className="flex items-center gap-2">
+          <CopyLinkButton />
+          <span className="font-mono text-xs text-[var(--mute)]">
+            Step {stepIndex + 1} of {total}
+          </span>
+        </div>
       </div>
 
       <ol className="mt-3 grid grid-cols-5 gap-1.5">

@@ -21,7 +21,7 @@ import {
   Zap,
 } from "lucide-react";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { 
   LatencyChart, 
@@ -176,6 +176,55 @@ function downloadCsv(filename: string, csv: string) {
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
+const REPLAY_PARAM = "replay";
+const STEP_PARAM = "step";
+
+/** Read an incoming shareable replay link from the URL (client only). */
+function readReplayParams(): { scenarioId: string | null; step: number } {
+  if (typeof window === "undefined") {
+    return { scenarioId: null, step: 0 };
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  const replay = params.get(REPLAY_PARAM);
+
+  if (!replay) {
+    return { scenarioId: null, step: 0 };
+  }
+
+  const scenario = replayScenarios.find((item) => item.id === replay);
+
+  if (!scenario) {
+    return { scenarioId: null, step: 0 };
+  }
+
+  const rawStep = Number(params.get(STEP_PARAM) ?? "0");
+  const step = Number.isFinite(rawStep)
+    ? Math.max(0, Math.min(Math.floor(rawStep), scenario.steps.length - 1))
+    : 0;
+
+  return { scenarioId: replay, step };
+}
+
+/** Keep the URL in sync with the active replay (no history entries, no scroll). */
+function syncReplayUrl(scenarioId: string | null, step: number) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const url = new URL(window.location.href);
+
+  if (scenarioId) {
+    url.searchParams.set(REPLAY_PARAM, scenarioId);
+    url.searchParams.set(STEP_PARAM, String(step));
+  } else {
+    url.searchParams.delete(REPLAY_PARAM);
+    url.searchParams.delete(STEP_PARAM);
+  }
+
+  window.history.replaceState(window.history.state, "", url);
+}
+
 export function Dashboard() {
   const queryClient = useQueryClient();
   const [range, setRange] = useState<Range>("24h");
@@ -193,8 +242,14 @@ export function Dashboard() {
   const [trafficShare, setTrafficShare] = useState(68);
   const [selectedGeneration, setSelectedGeneration] =
     useState<Generation | null>(null);
-  const [replayScenarioId, setReplayScenarioId] = useState<string | null>(null);
-  const [replayStepIndex, setReplayStepIndex] = useState(0);
+  // Seed from a shareable replay link (?replay=<id>&step=<n>) on first render
+  // so the replay rail shows the right step immediately (no mount flash).
+  const [replayScenarioId, setReplayScenarioId] = useState<string | null>(
+    () => readReplayParams().scenarioId,
+  );
+  const [replayStepIndex, setReplayStepIndex] = useState(() =>
+    readReplayParams().step,
+  );
 
   const { data, isLoading, isFetching, refetch } = useQuery({
     queryKey: ["ops-snapshot", range],
@@ -416,6 +471,54 @@ export function Dashboard() {
     );
     setSelectedGeneration(null);
   }
+
+  // The replay scenario/step are seeded from the URL via lazy state init above.
+  // This deferred effect applies the rest of the dashboard controls (incident
+  // selection, views, routing rule, scroll) so the cockpit matches the linked
+  // beat. rAF keeps the setState calls out of the synchronous effect body and
+  // lets the scroll target settle into the DOM first.
+  useEffect(() => {
+    if (!replayScenarioId) {
+      return;
+    }
+
+    const id = requestAnimationFrame(() =>
+      goToReplayStep(replayScenarioId, replayStepIndex),
+    );
+
+    return () => cancelAnimationFrame(id);
+    // Mount-only: apply the incoming replay link to dashboard controls.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // The mount effect above may run before the ops snapshot resolves, so
+  // setReplayRoutingRule had no cache entry to update. Re-apply the routing
+  // rule once for the deep-linked step as soon as data is available.
+  const deepLinkRoutingApplied = useRef(false);
+
+  useEffect(() => {
+    if (deepLinkRoutingApplied.current || !data || !replayScenarioId) {
+      return;
+    }
+
+    deepLinkRoutingApplied.current = true;
+
+    const scenario = replayScenarios.find(
+      (item) => item.id === replayScenarioId,
+    );
+    const step = scenario?.steps[replayStepIndex];
+
+    if (scenario && step) {
+      setReplayRoutingRule(scenario, step);
+    }
+    // Fires once when the snapshot first arrives for a URL-hydrated replay.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
+
+  // Keep the URL in sync with the active replay so every beat is copy-shareable.
+  useEffect(() => {
+    syncReplayUrl(replayScenarioId, replayStepIndex);
+  }, [replayScenarioId, replayStepIndex]);
 
   const applyRuleMutation = useMutation({
     mutationKey: ["routing-rule", range],
