@@ -62,6 +62,7 @@ import {
   type Provider,
   type ProviderId,
 } from "@/lib/mock-data";
+import { applyReplayUrlState, parseReplayUrlState } from "@/lib/replay-url";
 import { cn, formatCurrency, formatMs, formatNumber } from "@/lib/utils";
 
 const ranges = ["24h", "7d", "30d"] as const;
@@ -176,8 +177,9 @@ function downloadCsv(filename: string, csv: string) {
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
-const REPLAY_PARAM = "replay";
-const STEP_PARAM = "step";
+const replayStepCounts = new Map(
+  replayScenarios.map((scenario) => [scenario.id, scenario.steps.length]),
+);
 
 /** Read an incoming shareable replay link from the URL (client only). */
 function readReplayParams(): { scenarioId: string | null; step: number } {
@@ -185,25 +187,7 @@ function readReplayParams(): { scenarioId: string | null; step: number } {
     return { scenarioId: null, step: 0 };
   }
 
-  const params = new URLSearchParams(window.location.search);
-  const replay = params.get(REPLAY_PARAM);
-
-  if (!replay) {
-    return { scenarioId: null, step: 0 };
-  }
-
-  const scenario = replayScenarios.find((item) => item.id === replay);
-
-  if (!scenario) {
-    return { scenarioId: null, step: 0 };
-  }
-
-  const rawStep = Number(params.get(STEP_PARAM) ?? "0");
-  const step = Number.isFinite(rawStep)
-    ? Math.max(0, Math.min(Math.floor(rawStep), scenario.steps.length - 1))
-    : 0;
-
-  return { scenarioId: replay, step };
+  return parseReplayUrlState(window.location.search, replayStepCounts);
 }
 
 /** Keep the URL in sync with the active replay (no history entries, no scroll). */
@@ -212,15 +196,10 @@ function syncReplayUrl(scenarioId: string | null, step: number) {
     return;
   }
 
-  const url = new URL(window.location.href);
-
-  if (scenarioId) {
-    url.searchParams.set(REPLAY_PARAM, scenarioId);
-    url.searchParams.set(STEP_PARAM, String(step));
-  } else {
-    url.searchParams.delete(REPLAY_PARAM);
-    url.searchParams.delete(STEP_PARAM);
-  }
+  const url = applyReplayUrlState(new URL(window.location.href), {
+    scenarioId,
+    step,
+  });
 
   window.history.replaceState(window.history.state, "", url);
 }
