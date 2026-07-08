@@ -141,7 +141,7 @@ export function ProductHome() {
                 <ArrowRight className="ml-2 size-4" />
               </Link>
               <Link
-                href="/incidents/inc_411"
+                href="/cockpit?replay=alibaba-p95&step=0"
                 className={cn(
                   buttonVariants({ variant: "outline", size: "lg" }),
                   "h-11 rounded-lg border-[var(--border)] bg-white/90 px-5 text-[13px] font-semibold text-[var(--text)] shadow-sm hover:bg-white",
@@ -150,7 +150,7 @@ export function ProductHome() {
                 <span className="mr-2 grid size-5 place-items-center rounded-full border border-[var(--border)] text-[var(--accent)]">
                   <Play className="size-3 fill-current" />
                 </span>
-                See it in action
+                Watch guided replay
               </Link>
             </motion.div>
             <motion.div variants={itemVariants} className="mt-14">
