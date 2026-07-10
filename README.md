@@ -43,6 +43,8 @@ The dev server is pinned to [http://localhost:3020](http://localhost:3020) to av
 
 For a fast portfolio review, the dashboard opens with a **Guided incident replay** rail directly under the header. It turns the surface into a self-explaining demo — a first-run reviewer can follow one incident end to end in well under 90 seconds.
 
+The fastest shareable entry point is [`/cockpit?replay=alibaba-p95&step=0`](https://signalops.cc/cockpit?replay=alibaba-p95&step=0). The home page secondary CTA now opens that guided replay directly instead of sending reviewers to an unframed incident detail first.
+
 1. Pick a scenario — **Alibaba p95 spike**, **FLUX retry storm**, or **Qwen cost bleed**. Each is backed by the existing mock data, not a separate mock.
 2. Step through the rail. Every step drives the real controls (no dead overlay):
    - **Signal detected** — selects the incident and scrolls to the investigation workbench.
@@ -58,6 +60,7 @@ Each step also surfaces a short "technical proof" line calling out what it exerc
 
 - `/` opens the product overview and operating model.
 - `/cockpit` opens the live operations dashboard.
+- `/cockpit?replay=alibaba-p95&step=0` opens the guided replay from the first step.
 - `/incidents/inc_411` opens an incident investigation route.
 
 ## Portfolio Notes
