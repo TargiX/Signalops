@@ -286,7 +286,7 @@ const noValidResponse = await validateSignalEventRequest(
       events: [
         {
           type: "generation.completed",
-          occurredAt: "3026-07-12T12:00:00.000Z",
+          occurredAt: isoOffset(-60_000),
           generationId: "gen_invalid_001",
           providerId: "fal",
           modelId: "flux-kontext-pro",
@@ -302,5 +302,6 @@ const noValidJson = noValidResponse.body;
 assert.equal(noValidJson.ok, false);
 assert.equal(noValidJson.validEvents, 0);
 assert.equal(noValidJson.rejectedEvents, 1);
+assert.match(noValidJson.rejected[0].error, /durationMs/);
 
 console.log("signalops event validator checks passed");
