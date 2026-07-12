@@ -251,6 +251,50 @@ export function acceptsApplicationJson(request: Request) {
   return contentType?.split(";", 1)[0].trim().toLowerCase() === "application/json";
 }
 
+export async function readBoundedRequestBody(
+  request: Request,
+  maxBodyBytes: number,
+): Promise<{ ok: true; text: string } | { ok: false }> {
+  const body = request.body;
+
+  // Fall back to a buffered read when no stream is exposed, still enforcing the limit.
+  if (!body) {
+    const text = await request.text();
+    return getUtf8ByteLength(text) > maxBodyBytes ? { ok: false } : { ok: true, text };
+  }
+
+  const reader = body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let text = "";
+  let bytes = 0;
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      if (!value) {
+        continue;
+      }
+
+      bytes += value.byteLength;
+      if (bytes > maxBodyBytes) {
+        await reader.cancel();
+        return { ok: false };
+      }
+
+      // stream: true keeps multi-byte UTF-8 sequences intact across chunk boundaries.
+      text += decoder.decode(value, { stream: true });
+    }
+
+    text += decoder.decode();
+    return { ok: true, text };
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 export function normalizeSignalEvent(
   input: unknown,
   options: {
@@ -462,7 +506,7 @@ function createRequestId() {
   return `req_${crypto.randomUUID()}`;
 }
 
-function errorResponse(
+export function createSignalEventErrorResponse(
   status: number,
   requestId: string,
   code: string,
@@ -512,11 +556,11 @@ export async function validateSignalEventRequest(
   const requestId = createRequestId();
 
   if (!acceptsApplicationJson(request)) {
-    return errorResponse(415, requestId, "unsupported_media_type", "Use application/json.");
+    return createSignalEventErrorResponse(415, requestId, "unsupported_media_type", "Use application/json.");
   }
 
   if (requestContentLengthExceeds(request, SIGNALOPS_EVENT_LIMITS.maxBodyBytes)) {
-    return errorResponse(
+    return createSignalEventErrorResponse(
       413,
       requestId,
       "payload_too_large",
@@ -524,21 +568,23 @@ export async function validateSignalEventRequest(
     );
   }
 
-  const rawBody = await request.text();
-  if (getUtf8ByteLength(rawBody) > SIGNALOPS_EVENT_LIMITS.maxBodyBytes) {
-    return errorResponse(
+  const bodyResult = await readBoundedRequestBody(request, SIGNALOPS_EVENT_LIMITS.maxBodyBytes);
+  if (!bodyResult.ok) {
+    return createSignalEventErrorResponse(
       413,
       requestId,
       "payload_too_large",
       `Request body must be ${SIGNALOPS_EVENT_LIMITS.maxBodyBytes} bytes or smaller.`,
     );
   }
+
+  const rawBody = bodyResult.text;
 
   let payload: unknown;
   try {
     payload = JSON.parse(rawBody);
   } catch {
-    return errorResponse(400, requestId, "invalid_json", "Body must contain valid JSON.");
+    return createSignalEventErrorResponse(400, requestId, "invalid_json", "Body must contain valid JSON.");
   }
 
   let batch;
@@ -548,7 +594,7 @@ export async function validateSignalEventRequest(
       maxBatchEvents: SIGNALOPS_EVENT_LIMITS.maxBatchEvents,
     });
   } catch (error) {
-    return errorResponse(
+    return createSignalEventErrorResponse(
       422,
       requestId,
       "invalid_batch",

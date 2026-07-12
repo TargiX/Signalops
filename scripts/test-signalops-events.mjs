@@ -129,6 +129,37 @@ const retryOnlySummary = summarizeSignalEventValidation(
 assert.ok(retryOnlySummary.diagnostics.gaps.some((gap) => gap.includes("outcome")));
 assert.equal(retryOnlySummary.diagnostics.coverage.retries, true);
 
+const costEvent = normalizeSignalEvent(
+  {
+    type: "cost.recorded",
+    occurredAt: "2026-07-12T12:00:00.000Z",
+    providerId: "fal",
+    cost: 0.42,
+  },
+  { currentTimeMs: NOW },
+);
+assert.equal(costEvent.type, "cost.recorded");
+assert.equal(costEvent.providerId, "fal");
+assert.equal(costEvent.cost, 0.42);
+
+assert.throws(
+  () =>
+    normalizeSignalEvent(
+      { type: "cost.recorded", occurredAt: "2026-07-12T12:00:00.000Z", providerId: "fal" },
+      { currentTimeMs: NOW },
+    ),
+  /cost\.recorded requires providerId and cost/,
+);
+
+assert.throws(
+  () =>
+    normalizeSignalEvent(
+      { type: "cost.recorded", occurredAt: "2026-07-12T12:00:00.000Z", cost: 0.42 },
+      { currentTimeMs: NOW },
+    ),
+  /cost\.recorded requires providerId and cost/,
+);
+
 const invalidJsonResponse = await validateSignalEventRequest(
   new Request("http://localhost/api/events/validate", {
     method: "POST",
@@ -165,6 +196,16 @@ const tooLargeResponse = await validateSignalEventRequest(
   }),
 );
 assert.equal(tooLargeResponse.status, 413);
+
+// Isolate the early Content-Length short-circuit: a small, otherwise-valid body
+// rejected solely because the header claims the payload is oversized.
+const inflatedContentLengthResponse = await validateSignalEventRequest(
+  jsonRequest("{}", {
+    "content-length": String(SIGNALOPS_EVENT_LIMITS.maxBodyBytes + 1),
+  }),
+);
+assert.equal(inflatedContentLengthResponse.status, 413);
+assert.equal(inflatedContentLengthResponse.body.code, "payload_too_large");
 
 const actualUtf8TooLargeResponse = await validateSignalEventRequest(
   jsonRequest(JSON.stringify("界".repeat(Math.ceil(SIGNALOPS_EVENT_LIMITS.maxBodyBytes / 3) + 1))),

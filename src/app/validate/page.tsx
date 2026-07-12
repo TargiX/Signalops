@@ -3,45 +3,11 @@
 import { CheckCircle2, Clipboard, Loader2, ShieldAlert, Sparkles, XCircle } from "lucide-react";
 import { useMemo, useState } from "react";
 
-type ValidationResponse = {
-  ok: boolean;
-  code?: string;
-  error?: string;
-  partial?: boolean;
-  verificationOnly?: boolean;
-  storedEvents?: number;
-  validEvents?: number;
-  rejectedEvents?: number;
-  eventTypes?: string[];
-  providerIds?: string[];
-  modelIds?: string[];
-  requestId?: string;
-  limits?: {
-    maxBodyBytes: number;
-    maxBatchEvents: number;
-  };
-  diagnostics?: {
-    readiness: "insufficient" | "partial" | "pilot_ready";
-    coverage: {
-      generationLifecycle: {
-        started: boolean;
-        completed: boolean;
-        failed: boolean;
-        retrying: boolean;
-      };
-      providerHealth: boolean;
-      latency: boolean;
-      cost: boolean;
-      retries: boolean;
-      providers: number;
-      models: number;
-    };
-    gaps: string[];
-    nextActions: string[];
-  };
-  rejected?: Array<{ index: number; error: string }>;
-  acceptedPreview?: Array<Record<string, unknown>>;
-};
+import type { SignalEventValidationResponse } from "@/lib/signalops/events";
+
+// The endpoint returns unknown JSON, so treat every field as optional; the shape
+// itself is the server contract, imported type-only to stay in sync without drift.
+type ValidationResponse = Partial<SignalEventValidationResponse>;
 
 const samples = [
   {
@@ -140,11 +106,7 @@ function formatJson(value: unknown) {
   return JSON.stringify(value, null, 2);
 }
 
-function readinessTone(readiness: ValidationResponse["diagnostics"] extends infer T
-  ? T extends { readiness: infer R }
-    ? R
-    : never
-  : never) {
+function readinessTone(readiness: NonNullable<ValidationResponse["diagnostics"]>["readiness"]) {
   if (readiness === "pilot_ready") {
     return {
       label: "Pilot ready",
@@ -186,7 +148,7 @@ export default function ValidatePage() {
   const readiness = result?.diagnostics ? readinessTone(result.diagnostics.readiness) : null;
   const statusIcon = result?.ok
     ? CheckCircle2
-    : error || result
+    : error || result || !parsedPayload.ok
       ? XCircle
       : ShieldAlert;
 
@@ -201,6 +163,8 @@ export default function ValidatePage() {
     }
 
     setIsValidating(true);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
     try {
       const response = await fetch("/api/events/validate", {
         method: "POST",
@@ -208,6 +172,7 @@ export default function ValidatePage() {
           "content-type": "application/json",
         },
         body: formatJson(parsedPayload.value),
+        signal: controller.signal,
       });
       const json = (await response.json()) as ValidationResponse;
       setResult(json);
@@ -215,8 +180,15 @@ export default function ValidatePage() {
         setError(json.error ?? json.code ?? `Validation failed with ${response.status}`);
       }
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Validation request failed");
+      setError(
+        requestError instanceof Error && requestError.name === "AbortError"
+          ? "Validation timed out after 15 seconds."
+          : requestError instanceof Error
+            ? requestError.message
+            : "Validation request failed",
+      );
     } finally {
+      clearTimeout(timeout);
       setIsValidating(false);
     }
   }
@@ -335,9 +307,14 @@ export default function ValidatePage() {
             <textarea
               aria-label="SignalOps event payload JSON"
               value={payload}
-              onChange={(event) => setPayload(event.target.value)}
+              onChange={(event) => {
+                setPayload(event.target.value);
+                setCopied(false);
+                setError(null);
+                setResult(null);
+              }}
               spellCheck={false}
-              className="mt-5 min-h-[480px] w-full resize-y rounded-[24px] border border-[#162241] bg-[#07122b] p-5 font-mono text-xs leading-6 text-[#f4f7ff] outline-none transition focus:border-[var(--accent)]"
+              className="mt-5 min-h-[480px] w-full resize-y rounded-[24px] border border-[#162241] bg-[#07122b] p-5 font-mono text-xs leading-6 text-[#f4f7ff] outline-hidden transition focus:border-[var(--accent)]"
             />
 
             <div className="mt-4 flex flex-wrap gap-3">
@@ -361,20 +338,30 @@ export default function ValidatePage() {
             </div>
           </div>
 
-          <div
-            aria-live="polite"
-            className="rounded-[28px] border border-white/75 bg-white/90 p-5 shadow-[var(--shadow-2)] backdrop-blur sm:p-6"
-          >
-            <div className="flex items-center gap-3">
+          <div className="rounded-[28px] border border-white/75 bg-white/90 p-5 shadow-[var(--shadow-2)] backdrop-blur sm:p-6">
+            <div aria-live="polite" className="flex items-center gap-3">
               <div className="flex size-11 items-center justify-center rounded-2xl bg-[var(--surface-mute)] text-[var(--text-strong)]">
                 <StatusIcon className="size-5" />
               </div>
               <div>
                 <h2 className="text-xl font-semibold tracking-[-0.03em] text-[var(--text-strong)]">
-                  {result?.ok ? "Contract accepted" : error || result ? "Contract rejected" : "Ready to validate"}
+                  {result?.ok
+                    ? "Contract accepted"
+                    : error || result || !parsedPayload.ok
+                      ? "Contract rejected"
+                      : "Ready to validate"}
                 </h2>
                 <p className="mt-1 text-sm text-[var(--text-dim)]">
                   Public verification only. No events are persisted from this endpoint.
+                </p>
+                <p className="sr-only">
+                  {!parsedPayload.ok
+                    ? `Local JSON error: ${parsedPayload.error}`
+                    : error
+                      ? error
+                      : result
+                        ? `${result.validEvents ?? 0} accepted, ${result.rejectedEvents ?? 0} rejected.`
+                        : "Enter a payload to validate."}
                 </p>
               </div>
             </div>
