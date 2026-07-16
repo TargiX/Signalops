@@ -153,6 +153,15 @@ export function ProductHome() {
                 Watch guided replay
               </Link>
             </motion.div>
+            <motion.div variants={itemVariants} className="mt-4">
+              <Link
+                href="/validate"
+                className="inline-flex items-center gap-2 text-[13px] font-semibold text-[var(--text-dim)] transition-colors hover:text-[var(--accent)]"
+              >
+                Validate an event payload
+                <ArrowRight className="size-4" />
+              </Link>
+            </motion.div>
             <motion.div variants={itemVariants} className="mt-14">
               <p className="font-mono text-[10px] font-bold uppercase text-[var(--mute)]">Trusted by leading AI teams</p>
               <div className="mt-5 flex flex-wrap items-center gap-x-7 gap-y-3 text-[12px] font-semibold text-[#8c97ad]">
