@@ -2,6 +2,10 @@
   "name": "signalops",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=24"
+  },
+  "packageManager": "pnpm@10.24.0",
   "scripts": {
     "dev": "next dev -p 3020",
     "dev:any": "next dev",
@@ -10,7 +14,9 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit --pretty false",
     "test:home-navigation": "node scripts/test-home-navigation.mjs",
-    "check": "pnpm lint && pnpm typecheck && pnpm test:home-navigation && pnpm build"
+    "test:events": "node scripts/test-signalops-events.mjs",
+    "test:ingest": "node scripts/test-signalops-ingest.mjs",
+    "check": "pnpm lint && pnpm typecheck && pnpm test:home-navigation && pnpm test:events && pnpm test:ingest && pnpm build"
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",
