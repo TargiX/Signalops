@@ -30,7 +30,9 @@ SignalOps is a React dashboard for operating AI image-generation products. It is
 - Recharts
 - Lucide React
 
-## Run Locally
+## Run locally
+
+Requires Node.js 24 or newer and pnpm 10.24.0, matching CI and the native TypeScript contract checks.
 
 ```bash
 pnpm install
@@ -38,6 +40,14 @@ pnpm dev
 ```
 
 The dev server is pinned to [http://localhost:3020](http://localhost:3020) to avoid colliding with other local portfolio/product apps.
+
+## Event API boundaries
+
+- `POST /api/events/validate` is public and verification-only. It normalizes and redacts events but stores nothing.
+- `POST /api/events` is a protected development/test ingest seam. Set `SIGNALOPS_INGEST_TOKEN` and send that exact value using the Bearer authorization scheme.
+- Accepted local events always use the validator's bounded JSON, batch, normalization, and redaction contract. Exact retries return the same receipt reference and do not duplicate retained events.
+- The local memory sink retains at most 1,000 events and can evict the oldest retained event. Receipts expose stored, duplicate, evicted, and retained counts so this behavior is not presented as durability.
+- Production intentionally returns `503 storage_not_ready` after authentication because this slice does not configure a durable store. The endpoint is not production-ready until a separate durable sink is implemented and explicitly wired.
 
 ## Demo script
 
