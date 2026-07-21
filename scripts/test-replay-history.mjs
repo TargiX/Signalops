@@ -84,6 +84,80 @@ const writesBeforeRestore = writes;
 restore();
 assert.equal(writes, writesBeforeRestore, "Restoring history must not write another entry.");
 
+const replayRoutingAppliedKeys = new Set();
+const rangeSnapshots = new Map();
+let routingWrites = 0;
+
+function replayRoutingKey({ range, scenarioId, step }) {
+  return `${range}:${scenarioId}:${step}`;
+}
+
+function reconcileReplayRouting({ range, scenarioId, step, routingApplied }) {
+  const snapshot = rangeSnapshots.get(range);
+  const key = replayRoutingKey({ range, scenarioId, step });
+
+  if (!snapshot || replayRoutingAppliedKeys.has(key)) {
+    return false;
+  }
+
+  rangeSnapshots.set(range, {
+    ...snapshot,
+    activeRoutingRule: routingApplied
+      ? { id: `rule_${scenarioId}_${step}`, scenarioId, step }
+      : null,
+  });
+  replayRoutingAppliedKeys.add(key);
+  routingWrites += 1;
+  return true;
+}
+
+const coldRangeReplay = {
+  range: "7d",
+  scenarioId: "alibaba-p95",
+  step: 3,
+  routingApplied: true,
+};
+assert.equal(
+  reconcileReplayRouting(coldRangeReplay),
+  false,
+  "A cold range must wait for its exact snapshot instead of recording a stale applied key.",
+);
+rangeSnapshots.set("7d", { activeRoutingRule: null });
+assert.equal(
+  reconcileReplayRouting(coldRangeReplay),
+  true,
+  "Arrival of the cold range snapshot must apply the current replay routing rule.",
+);
+assert.deepEqual(rangeSnapshots.get("7d")?.activeRoutingRule, {
+  id: "rule_alibaba-p95_3",
+  scenarioId: "alibaba-p95",
+  step: 3,
+});
+const routingWritesAfterArrival = routingWrites;
+assert.equal(
+  reconcileReplayRouting(coldRangeReplay),
+  false,
+  "Repeated snapshot resolution must not duplicate the replay routing rule.",
+);
+assert.equal(
+  routingWrites,
+  routingWritesAfterArrival,
+  "Repeated snapshot resolution must leave the active routing rule as one write.",
+);
+
+assert.equal(
+  reconcileReplayRouting({ ...coldRangeReplay, step: 1, routingApplied: false }),
+  true,
+  "A non-routing replay step must reconcile the same range after routing was active.",
+);
+assert.equal(
+  rangeSnapshots.get("7d")?.activeRoutingRule,
+  null,
+  "A non-routing replay step must clear the prior active routing rule.",
+);
+assert.equal(routingWrites, 2, "Only the routing and clearing replay states should write once each.");
+assert.equal(writes, writesBeforeRestore, "Routing reconciliation must not create history entries.");
+
 assert.match(
   dashboardSource,
   /function writeReplayUrlState\([\s\S]*?history\.pushState/,
@@ -109,7 +183,27 @@ assert.match(
   /setSelectedIncidentId\(step\.state\.selectedIncidentId\)[\s\S]*?setReplayRoutingRule\(scenario, step\)/,
   "Expected restored replay steps to reconcile the selected incident and routing context.",
 );
+assert.match(
+  dashboardSource,
+  /const replayRoutingAppliedKey = useRef<string \| null>\(null\)/,
+  "Expected replay routing reconciliation to track the current range/scenario/step instead of one deep-link lifetime.",
+);
+assert.match(
+  dashboardSource,
+  /replayRoutingAppliedKey\.current = setReplayRoutingRule\(scenario, step\)[\s\S]*?\? routingKey\s*:\s*null/,
+  "Expected a cold-cache replay transition to remain eligible for post-fetch reconciliation.",
+);
+assert.match(
+  dashboardSource,
+  /routingKey !== replayRoutingAppliedKey\.current[\s\S]*?setReplayRoutingRule\(scenario, step\)[\s\S]*?replayRoutingAppliedKey\.current = routingKey/,
+  "Expected each resolved range/scenario/step to apply routing exactly once.",
+);
+assert.match(
+  dashboardSource,
+  /\}, \[data, range, replayScenarioId, replayStepIndex\]\);/,
+  "Expected routing reconciliation to retry when the range or replay state changes.",
+);
 
 console.log(
-  "Replay history contracts OK: step entries, Back/Forward restoration, completion/export context, and no recursive write.",
+  "Replay history contracts OK: step entries, cold-cache routing reconciliation, Back/Forward restoration, completion/export context, and no recursive write.",
 );
