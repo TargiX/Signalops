@@ -62,7 +62,11 @@ import {
   type Provider,
   type ProviderId,
 } from "@/lib/mock-data";
-import { applyReplayUrlState, parseReplayUrlState } from "@/lib/replay-url";
+import {
+  applyReplayUrlState,
+  parseReplayUrlState,
+  replayUrlStateMatches,
+} from "@/lib/replay-url";
 import { dispatchCsvDownload } from "@/lib/csv-download";
 import { cn, formatCurrency, formatMs, formatNumber } from "@/lib/utils";
 
@@ -178,18 +182,40 @@ function readReplayParams(): { scenarioId: string | null; step: number } {
   return parseReplayUrlState(window.location.search, replayStepCounts);
 }
 
-/** Keep the URL in sync with the active replay (no history entries, no scroll). */
-function syncReplayUrl(scenarioId: string | null, step: number) {
-  if (typeof window === "undefined") {
+type ReplayUrlWriteMode = "push" | "replace" | "none";
+
+function writeReplayUrlState(
+  scenarioId: string | null,
+  step: number,
+  mode: ReplayUrlWriteMode,
+) {
+  if (typeof window === "undefined" || mode === "none") {
     return;
   }
 
-  const url = applyReplayUrlState(new URL(window.location.href), {
+  const state = {
     scenarioId,
     step,
-  });
+  };
+  const currentUrl = new URL(window.location.href);
+
+  if (replayUrlStateMatches(currentUrl, state)) {
+    return;
+  }
+
+  const url = applyReplayUrlState(currentUrl, state);
+
+  if (mode === "push") {
+    window.history.pushState(window.history.state, "", url);
+    return;
+  }
 
   window.history.replaceState(window.history.state, "", url);
+}
+
+/** Normalize direct links without creating another browser history entry. */
+function syncReplayUrl(scenarioId: string | null, step: number) {
+  writeReplayUrlState(scenarioId, step, "replace");
 }
 
 export function Dashboard() {
@@ -369,10 +395,14 @@ export function Dashboard() {
     scenario: (typeof replayScenarios)[number],
     step: (typeof replayScenarios)[number]["steps"][number],
   ) {
+    let applied = false;
+
     queryClient.setQueryData<OpsSnapshot>(["ops-snapshot", range], (snapshot) => {
       if (!snapshot) {
         return snapshot;
       }
+
+      applied = true;
 
       if (!step.state.routingApplied) {
         return { ...snapshot, activeRoutingRule: null };
@@ -388,9 +418,17 @@ export function Dashboard() {
         }),
       };
     });
+
+    return applied;
   }
 
-  function goToReplayStep(scenarioId: string, index: number) {
+  const replayRoutingAppliedKey = useRef<string | null>(null);
+
+  function goToReplayStep(
+    scenarioId: string,
+    index: number,
+    historyMode: ReplayUrlWriteMode = "push",
+  ) {
     const scenario = replayScenarios.find((item) => item.id === scenarioId);
 
     if (!scenario) {
@@ -409,10 +447,14 @@ export function Dashboard() {
     setQueueFocusStatus(step.state.queueFocusStatus);
     setTriggerMode(step.state.triggerMode);
     setTrafficShare(step.state.trafficShare);
-    setReplayRoutingRule(scenario, step);
+    const routingKey = `${range}:${scenario.id}:${boundedIndex}`;
+    replayRoutingAppliedKey.current = setReplayRoutingRule(scenario, step)
+      ? routingKey
+      : null;
     setSelectedGeneration(null);
     setReplayScenarioId(scenarioId);
     setReplayStepIndex(boundedIndex);
+    writeReplayUrlState(scenarioId, boundedIndex, historyMode);
 
     if (typeof document !== "undefined") {
       requestAnimationFrame(() => {
@@ -423,7 +465,7 @@ export function Dashboard() {
     }
   }
 
-  function exitReplay() {
+  function exitReplay(historyMode: ReplayUrlWriteMode = "push") {
     setReplayScenarioId(null);
     setReplayStepIndex(0);
     setSelectedIncidentId(replayBaseline.selectedIncidentId);
@@ -434,10 +476,12 @@ export function Dashboard() {
     setQueueFocusStatus(replayBaseline.queueFocusStatus);
     setTriggerMode(replayBaseline.triggerMode);
     setTrafficShare(replayBaseline.trafficShare);
+    replayRoutingAppliedKey.current = null;
     queryClient.setQueryData<OpsSnapshot>(["ops-snapshot", range], (snapshot) =>
       snapshot ? { ...snapshot, activeRoutingRule: null } : snapshot,
     );
     setSelectedGeneration(null);
+    writeReplayUrlState(null, 0, historyMode);
   }
 
   // The replay scenario/step are seeded from the URL via lazy state init above.
@@ -451,7 +495,7 @@ export function Dashboard() {
     }
 
     const id = requestAnimationFrame(() =>
-      goToReplayStep(replayScenarioId, replayStepIndex),
+      goToReplayStep(replayScenarioId, replayStepIndex, "none"),
     );
 
     return () => cancelAnimationFrame(id);
@@ -459,34 +503,55 @@ export function Dashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // The mount effect above may run before the ops snapshot resolves, so
-  // setReplayRoutingRule had no cache entry to update. Re-apply the routing
-  // rule once for the deep-linked step as soon as data is available.
-  const deepLinkRoutingApplied = useRef(false);
-
   useEffect(() => {
-    if (deepLinkRoutingApplied.current || !data || !replayScenarioId) {
+    if (!data || !replayScenarioId) {
       return;
     }
-
-    deepLinkRoutingApplied.current = true;
 
     const scenario = replayScenarios.find(
       (item) => item.id === replayScenarioId,
     );
-    const step = scenario?.steps[replayStepIndex];
+    const boundedIndex = scenario
+      ? Math.max(0, Math.min(replayStepIndex, scenario.steps.length - 1))
+      : 0;
+    const step = scenario?.steps[boundedIndex];
+    const routingKey = scenario ? `${range}:${scenario.id}:${boundedIndex}` : null;
 
-    if (scenario && step) {
-      setReplayRoutingRule(scenario, step);
+    if (
+      scenario &&
+      step &&
+      routingKey !== replayRoutingAppliedKey.current &&
+      setReplayRoutingRule(scenario, step)
+    ) {
+      replayRoutingAppliedKey.current = routingKey;
     }
-    // Fires once when the snapshot first arrives for a URL-hydrated replay.
+    // Reconcile each range/scenario/step once after its snapshot arrives.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data]);
+  }, [data, range, replayScenarioId, replayStepIndex]);
 
   // Keep the URL in sync with the active replay so every beat is copy-shareable.
   useEffect(() => {
     syncReplayUrl(replayScenarioId, replayStepIndex);
   }, [replayScenarioId, replayStepIndex]);
+
+  useEffect(() => {
+    const handlePopState = () => {
+      const state = readReplayParams();
+
+      if (state.scenarioId) {
+        goToReplayStep(state.scenarioId, state.step, "none");
+        return;
+      }
+
+      exitReplay("none");
+    };
+
+    window.addEventListener("popstate", handlePopState);
+
+    return () => window.removeEventListener("popstate", handlePopState);
+    // Re-subscribe when range changes so popstate restores the active snapshot cache.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [range]);
 
   const applyRuleMutation = useMutation({
     mutationKey: ["routing-rule", range],
