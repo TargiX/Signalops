@@ -54,3 +54,7 @@ export function applyReplayUrlState(url: URL, state: ReplayUrlState): URL {
 
   return nextUrl;
 }
+
+export function replayUrlStateMatches(url: URL, state: ReplayUrlState): boolean {
+  return applyReplayUrlState(url, state).href === url.href;
+}
