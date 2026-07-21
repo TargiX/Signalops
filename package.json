@@ -13,10 +13,11 @@
     "start": "next start -p 3020",
     "lint": "eslint",
     "typecheck": "tsc --noEmit --pretty false",
+    "test:csv-download": "node scripts/test-csv-download.mjs",
     "test:home-navigation": "node scripts/test-home-navigation.mjs",
     "test:events": "node scripts/test-signalops-events.mjs",
     "test:ingest": "node scripts/test-signalops-ingest.mjs",
-    "check": "pnpm lint && pnpm typecheck && pnpm test:home-navigation && pnpm test:events && pnpm test:ingest && pnpm build"
+    "check": "pnpm lint && pnpm typecheck && pnpm test:csv-download && pnpm test:home-navigation && pnpm test:events && pnpm test:ingest && pnpm build"
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",
