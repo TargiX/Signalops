@@ -63,6 +63,7 @@ import {
   type ProviderId,
 } from "@/lib/mock-data";
 import { applyReplayUrlState, parseReplayUrlState } from "@/lib/replay-url";
+import { dispatchCsvDownload } from "@/lib/csv-download";
 import { cn, formatCurrency, formatMs, formatNumber } from "@/lib/utils";
 
 const ranges = ["24h", "7d", "30d"] as const;
@@ -164,19 +165,6 @@ function buildCsv(rows: CsvRow[]) {
   ].join("\r\n");
 }
 
-function downloadCsv(filename: string, csv: string) {
-  const blob = new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 0);
-}
-
 const replayStepCounts = new Map(
   replayScenarios.map((scenario) => [scenario.id, scenario.steps.length]),
 );
@@ -221,6 +209,7 @@ export function Dashboard() {
   const [trafficShare, setTrafficShare] = useState(68);
   const [selectedGeneration, setSelectedGeneration] =
     useState<Generation | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
   // Seed from a shareable replay link (?replay=<id>&step=<n>) on first render
   // so the replay rail shows the right step immediately (no mount flash).
   const [replayScenarioId, setReplayScenarioId] = useState<string | null>(
@@ -574,6 +563,8 @@ export function Dashboard() {
   }
 
   function handleExport() {
+    setExportError(null);
+
     if (!data || !metrics) {
       return;
     }
@@ -705,7 +696,14 @@ export function Dashboard() {
       .replaceAll(":", "-")
       .replace(/\.\d{3}Z$/, "Z");
 
-    downloadCsv(`signalops-${range}-${timestamp}.csv`, buildCsv(snapshotRows));
+    const exportResult = dispatchCsvDownload(
+      `signalops-${range}-${timestamp}.csv`,
+      buildCsv(snapshotRows),
+    );
+
+    if (!exportResult.dispatched) {
+      setExportError("Export did not start. Try again.");
+    }
   }
 
   if (isLoading || !data || !metrics) {
@@ -796,6 +794,14 @@ export function Dashboard() {
             </motion.button>
           </div>
         </header>
+        {exportError ? (
+          <p
+            role="alert"
+            className="rounded-lg border border-[var(--danger)] bg-[var(--danger-soft)] px-4 py-3 text-sm font-medium text-[var(--danger)]"
+          >
+            {exportError}
+          </p>
+        ) : null}
 
         <IncidentReplay
           scenarios={replayScenarios}
