@@ -330,7 +330,7 @@ export function IncidentReplay({
         </div>
         {activeScenario ? (
           <button
-            onClick={onExit}
+            onClick={() => onExit()}
             className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-[12.5px] font-medium text-[var(--text-dim)] transition-colors hover:bg-[var(--surface-mute)]"
           >
             Exit replay
@@ -592,7 +592,7 @@ function ReplayPlayer({
         </button>
         {isLast ? (
           <button
-            onClick={onExit}
+            onClick={() => onExit()}
             className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-lg border border-[var(--accent)] bg-[var(--accent)] px-4 text-[12.5px] font-semibold text-white shadow-[var(--shadow-1)] transition-colors hover:bg-[var(--accent-hover)]"
           >
             <CheckCircle2 className="size-4" />
