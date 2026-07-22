@@ -16,6 +16,7 @@ const incidentDetailSourcePath = path.join(
   "src/components/incident-detail.tsx",
 );
 const layoutSourcePath = path.join(repoRoot, "src/app/layout.tsx");
+const dashboardSourcePath = path.join(repoRoot, "src/components/dashboard.tsx");
 
 const homeSource = await readFile(homeSourcePath, "utf8");
 
@@ -47,6 +48,68 @@ assert.match(
     `metadataBase: new URL\\(["']${escapedIncidentOrigin}["']\\)`,
   ),
   "Expected the incident handoff origin to match the app metadata base.",
+);
+
+const dashboardSource = await readFile(dashboardSourcePath, "utf8");
+const replayUrlWriterStart = dashboardSource.indexOf("function writeReplayUrlState(");
+const replayUrlWriterEnd = dashboardSource.indexOf(
+  "/** Normalize direct links",
+  replayUrlWriterStart,
+);
+const replayUrlWriter = dashboardSource.slice(replayUrlWriterStart, replayUrlWriterEnd);
+
+assert.ok(
+  replayUrlWriterStart >= 0 && replayUrlWriterEnd > replayUrlWriterStart,
+  "Expected dashboard to define the replay URL writer.",
+);
+assert.match(
+  replayUrlWriter,
+  /try\s*\{[\s\S]*?history\.pushState[\s\S]*?history\.replaceState[\s\S]*?\}\s*catch\s*\{[\s\S]*?return false;/,
+  "Expected thrown History API mutations to be contained by the replay URL writer.",
+);
+assert.match(
+  dashboardSource,
+  /setReplayScenarioId\(scenarioId\);[\s\S]*?setReplayStepIndex\(boundedIndex\);[\s\S]*?settleReplayUrl\(scenarioId, boundedIndex, historyMode\);/,
+  "Expected replay state to advance before URL synchronization settles.",
+);
+assert.match(
+  dashboardSource,
+  /const \[replayUrlError, setReplayUrlError\] = useState<string \| null>\(null\);/,
+  "Expected bounded replay URL synchronization failure state.",
+);
+assert.match(
+  dashboardSource,
+  /Replay advanced, but the address bar could not be updated\./,
+  "Expected URL synchronization failure copy to remain truthful.",
+);
+assert.match(
+  dashboardSource,
+  /setReplayUrlError\(\s*synchronized\s*\?\s*null\s*:/,
+  "Expected a successful URL synchronization to clear the failure state.",
+);
+const replayUrlErrorRenderStart = dashboardSource.indexOf("{replayUrlError ? (");
+const replayUrlErrorRenderEnd = dashboardSource.indexOf(
+  "\n\n        <IncidentReplay",
+  replayUrlErrorRenderStart,
+);
+const replayUrlErrorRender = dashboardSource.slice(
+  replayUrlErrorRenderStart,
+  replayUrlErrorRenderEnd,
+);
+
+assert.ok(
+  replayUrlErrorRenderStart >= 0 && replayUrlErrorRenderEnd > replayUrlErrorRenderStart,
+  "Expected dashboard to render replay URL synchronization recovery next to the replay controls.",
+);
+assert.match(
+  replayUrlErrorRender,
+  /role="alert"[\s\S]*?Retry URL sync/,
+  "Expected an accessible replay URL synchronization failure with a visible retry.",
+);
+assert.match(
+  replayUrlErrorRender,
+  /settleReplayUrl\(replayScenarioId, replayStepIndex, "replace"\)/,
+  "Expected retry to synchronize the current replay id and step without a new history entry.",
 );
 
 const handoff = buildIncidentHandoff({

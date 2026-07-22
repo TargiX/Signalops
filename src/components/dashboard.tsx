@@ -190,7 +190,7 @@ function writeReplayUrlState(
   mode: ReplayUrlWriteMode,
 ) {
   if (typeof window === "undefined" || mode === "none") {
-    return;
+    return true;
   }
 
   const state = {
@@ -200,22 +200,27 @@ function writeReplayUrlState(
   const currentUrl = new URL(window.location.href);
 
   if (replayUrlStateMatches(currentUrl, state)) {
-    return;
+    return true;
   }
 
   const url = applyReplayUrlState(currentUrl, state);
 
-  if (mode === "push") {
-    window.history.pushState(window.history.state, "", url);
-    return;
-  }
+  try {
+    if (mode === "push") {
+      window.history.pushState(window.history.state, "", url);
+      return true;
+    }
 
-  window.history.replaceState(window.history.state, "", url);
+    window.history.replaceState(window.history.state, "", url);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Normalize direct links without creating another browser history entry. */
 function syncReplayUrl(scenarioId: string | null, step: number) {
-  writeReplayUrlState(scenarioId, step, "replace");
+  return writeReplayUrlState(scenarioId, step, "replace");
 }
 
 export function Dashboard() {
@@ -236,6 +241,7 @@ export function Dashboard() {
   const [selectedGeneration, setSelectedGeneration] =
     useState<Generation | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [replayUrlError, setReplayUrlError] = useState<string | null>(null);
   // Seed from a shareable replay link (?replay=<id>&step=<n>) on first render
   // so the replay rail shows the right step immediately (no mount flash).
   const [replayScenarioId, setReplayScenarioId] = useState<string | null>(
@@ -424,6 +430,24 @@ export function Dashboard() {
 
   const replayRoutingAppliedKey = useRef<string | null>(null);
 
+  function settleReplayUrl(
+    scenarioId: string | null,
+    step: number,
+    mode: ReplayUrlWriteMode,
+  ) {
+    const synchronized =
+      mode === "replace"
+        ? syncReplayUrl(scenarioId, step)
+        : writeReplayUrlState(scenarioId, step, mode);
+
+    setReplayUrlError(
+      synchronized
+        ? null
+        : "Replay advanced, but the address bar could not be updated.",
+    );
+    return synchronized;
+  }
+
   function goToReplayStep(
     scenarioId: string,
     index: number,
@@ -454,7 +478,7 @@ export function Dashboard() {
     setSelectedGeneration(null);
     setReplayScenarioId(scenarioId);
     setReplayStepIndex(boundedIndex);
-    writeReplayUrlState(scenarioId, boundedIndex, historyMode);
+    settleReplayUrl(scenarioId, boundedIndex, historyMode);
 
     if (typeof document !== "undefined") {
       requestAnimationFrame(() => {
@@ -481,7 +505,7 @@ export function Dashboard() {
       snapshot ? { ...snapshot, activeRoutingRule: null } : snapshot,
     );
     setSelectedGeneration(null);
-    writeReplayUrlState(null, 0, historyMode);
+    settleReplayUrl(null, 0, historyMode);
   }
 
   // The replay scenario/step are seeded from the URL via lazy state init above.
@@ -531,7 +555,11 @@ export function Dashboard() {
 
   // Keep the URL in sync with the active replay so every beat is copy-shareable.
   useEffect(() => {
-    syncReplayUrl(replayScenarioId, replayStepIndex);
+    const id = requestAnimationFrame(() =>
+      settleReplayUrl(replayScenarioId, replayStepIndex, "replace"),
+    );
+
+    return () => cancelAnimationFrame(id);
   }, [replayScenarioId, replayStepIndex]);
 
   useEffect(() => {
@@ -866,6 +894,25 @@ export function Dashboard() {
           >
             {exportError}
           </p>
+        ) : null}
+        {replayUrlError ? (
+          <div
+            role="alert"
+            className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--danger)] bg-[var(--danger-soft)] px-4 py-3 text-sm font-medium text-[var(--danger)]"
+          >
+            <p>{replayUrlError}</p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                settleReplayUrl(replayScenarioId, replayStepIndex, "replace")
+              }
+              aria-label="Retry replay URL synchronization"
+            >
+              Retry URL sync
+            </Button>
+          </div>
         ) : null}
 
         <IncidentReplay
