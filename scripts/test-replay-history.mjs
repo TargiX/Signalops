@@ -11,6 +11,8 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..");
 const dashboardPath = path.join(repoRoot, "src/components/dashboard.tsx");
 const dashboardSource = await readFile(dashboardPath, "utf8");
+const incidentReplayPath = path.join(repoRoot, "src/components/incident-replay.tsx");
+const incidentReplaySource = await readFile(incidentReplayPath, "utf8");
 const stepCounts = new Map([["alibaba-p95", 5]]);
 const controlContext = [
   { incidentId: "inc_411", routingApplied: false, exportNextAction: false },
@@ -28,6 +30,22 @@ function visit(step) {
   const nextUrl = applyReplayUrlState(entries[cursor], {
     scenarioId: "alibaba-p95",
     step,
+  });
+
+  if (nextUrl.href === entries[cursor].href) {
+    return;
+  }
+
+  entries.splice(cursor + 1);
+  entries.push(nextUrl);
+  cursor += 1;
+  writes += 1;
+}
+
+function finishReplay() {
+  const nextUrl = applyReplayUrlState(entries[cursor], {
+    scenarioId: null,
+    step: 0,
   });
 
   if (nextUrl.href === entries[cursor].href) {
@@ -83,6 +101,40 @@ assert.deepEqual(restore(), {
 const writesBeforeRestore = writes;
 restore();
 assert.equal(writes, writesBeforeRestore, "Restoring history must not write another entry.");
+
+finishReplay();
+const writesAfterFinish = writes;
+assert.deepEqual(restore(), {
+  scenarioId: null,
+  step: 0,
+  incidentId: "inc_411",
+  routingApplied: false,
+  exportNextAction: false,
+});
+cursor -= 1;
+assert.deepEqual(
+  restore(),
+  {
+    scenarioId: "alibaba-p95",
+    step: 4,
+    incidentId: "inc_411",
+    routingApplied: true,
+    exportNextAction: true,
+  },
+  "Back after Finish replay must restore the terminal Export context, not replay step 1.",
+);
+cursor += 1;
+assert.deepEqual(
+  restore(),
+  {
+    scenarioId: null,
+    step: 0,
+    incidentId: "inc_411",
+    routingApplied: false,
+    exportNextAction: false,
+  },
+  "Forward after Finish replay must restore the completed replay launcher.",
+);
 
 const replayRoutingAppliedKeys = new Set();
 const rangeSnapshots = new Map();
@@ -156,7 +208,7 @@ assert.equal(
   "A non-routing replay step must clear the prior active routing rule.",
 );
 assert.equal(routingWrites, 2, "Only the routing and clearing replay states should write once each.");
-assert.equal(writes, writesBeforeRestore, "Routing reconciliation must not create history entries.");
+assert.equal(writes, writesAfterFinish, "Routing reconciliation must not create history entries.");
 
 assert.match(
   dashboardSource,
@@ -177,6 +229,11 @@ assert.match(
   dashboardSource,
   /exitReplay\("none"\)/,
   "Expected popstate exit restoration to avoid recursive history writes.",
+);
+assert.equal(
+  (incidentReplaySource.match(/onClick=\{\(\) => onExit\(\)\}/g) ?? []).length,
+  2,
+  "Exit replay and Finish replay must invoke onExit without forwarding the click event as a history mode.",
 );
 assert.match(
   dashboardSource,
@@ -205,5 +262,5 @@ assert.match(
 );
 
 console.log(
-  "Replay history contracts OK: step entries, cold-cache routing reconciliation, Back/Forward restoration, completion/export context, and no recursive write.",
+  "Replay history contracts OK: step entries, Finish -> Back -> Forward terminal continuity, cold-cache routing reconciliation, and no recursive write.",
 );
