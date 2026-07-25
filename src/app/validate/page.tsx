@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckCircle2, Clipboard, Loader2, ShieldAlert, Sparkles, XCircle } from "lucide-react";
+import { CheckCircle2, Clipboard, ClipboardCheck, Loader2, ShieldAlert, Sparkles, XCircle } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import type { SignalEventValidationResponse } from "@/lib/signalops/events";
@@ -106,6 +106,35 @@ function formatJson(value: unknown) {
   return JSON.stringify(value, null, 2);
 }
 
+function formatValidationHandoff(result: ValidationResponse) {
+  const diagnostics = result.diagnostics;
+  const coverage = [
+    diagnostics?.coverage.generationLifecycle.started ? "started" : "",
+    diagnostics?.coverage.generationLifecycle.completed ? "completed" : "",
+    diagnostics?.coverage.generationLifecycle.failed ? "failed" : "",
+    diagnostics?.coverage.generationLifecycle.retrying ? "retrying" : "",
+    diagnostics?.coverage.latency ? "latency" : "",
+    diagnostics?.coverage.cost ? "cost" : "",
+    diagnostics?.coverage.retries ? "retries" : "",
+    diagnostics?.coverage.providerHealth ? "provider health" : "",
+  ].filter(Boolean);
+
+  return [
+    "SignalOps validation handoff",
+    `Outcome: ${result.ok ? "contract accepted" : "contract rejected"}`,
+    `Request ID: ${result.requestId ?? "not returned"}`,
+    `Accepted: ${result.validEvents ?? 0} · Rejected: ${result.rejectedEvents ?? 0}`,
+    `Readiness: ${diagnostics?.readiness ?? "not returned"}`,
+    `Coverage: ${coverage.length ? coverage.join(", ") : "none reported"}`,
+    `Providers: ${result.providerIds?.join(", ") || "none reported"}`,
+    `Models: ${result.modelIds?.join(", ") || "none reported"}`,
+    `Gaps: ${diagnostics?.gaps.length ? diagnostics.gaps.join("; ") : "none reported"}`,
+    `Next actions: ${diagnostics?.nextActions.length ? diagnostics.nextActions.join("; ") : "none reported"}`,
+    `Accepted preview: ${result.acceptedPreview?.length ? "redacted preview returned; no event was stored" : "no accepted preview returned"}`,
+    "Endpoint: POST /api/events/validate (public verification only; zero storage)",
+  ].join("\n");
+}
+
 function readinessTone(readiness: NonNullable<ValidationResponse["diagnostics"]>["readiness"]) {
   if (readiness === "pilot_ready") {
     return {
@@ -133,6 +162,7 @@ export default function ValidatePage() {
   const [error, setError] = useState<string | null>(null);
   const [isValidating, setIsValidating] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [copiedHandoff, setCopiedHandoff] = useState(false);
 
   const parsedPayload = useMemo(() => {
     try {
@@ -154,6 +184,7 @@ export default function ValidatePage() {
 
   async function runValidation() {
     setCopied(false);
+    setCopiedHandoff(false);
     setError(null);
     setResult(null);
 
@@ -202,6 +233,19 @@ export default function ValidatePage() {
     }
   }
 
+  async function copyValidationHandoff() {
+    if (!result) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(formatValidationHandoff(result));
+      setCopiedHandoff(true);
+    } catch (clipboardError) {
+      setError(clipboardError instanceof Error ? clipboardError.message : "Copy failed");
+    }
+  }
+
   function loadSample(sampleId: string) {
     const sample = samples.find((entry) => entry.id === sampleId);
     if (!sample) {
@@ -209,6 +253,7 @@ export default function ValidatePage() {
     }
 
     setCopied(false);
+    setCopiedHandoff(false);
     setError(null);
     setResult(null);
     setPayload(formatJson(sample.payload));
@@ -310,6 +355,7 @@ export default function ValidatePage() {
               onChange={(event) => {
                 setPayload(event.target.value);
                 setCopied(false);
+                setCopiedHandoff(false);
                 setError(null);
                 setResult(null);
               }}
@@ -495,6 +541,27 @@ export default function ValidatePage() {
                   <p>
                     Returned limits: {result.limits?.maxBodyBytes ?? 262144} bytes, {result.limits?.maxBatchEvents ?? 100} events
                   </p>
+                </div>
+
+                <div className="rounded-2xl border border-[var(--border)] bg-white p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--text-dim)]">
+                        Integration handoff
+                      </p>
+                      <p className="mt-2 max-w-md text-sm leading-6 text-[var(--text)]">
+                        Copy a compact receipt with this result&apos;s readiness, coverage, gaps, and zero-storage preview status.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={copyValidationHandoff}
+                      className="inline-flex h-10 shrink-0 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--surface-mute)] px-4 text-sm font-semibold text-[var(--text)] transition hover:border-[var(--accent)] hover:text-[var(--accent)]"
+                    >
+                      {copiedHandoff ? <ClipboardCheck className="mr-2 size-4" /> : <Clipboard className="mr-2 size-4" />}
+                      {copiedHandoff ? "Handoff copied" : "Copy handoff"}
+                    </button>
+                  </div>
                 </div>
               </div>
             ) : (
