@@ -250,6 +250,7 @@ export function Dashboard() {
   const [replayStepIndex, setReplayStepIndex] = useState(() =>
     readReplayParams().step,
   );
+  const queueRef = useRef<HTMLDivElement | null>(null);
 
   const { data, isLoading, isFetching, refetch } = useQuery({
     queryKey: ["ops-snapshot", range],
@@ -1011,6 +1012,10 @@ export function Dashboard() {
                 setSavedView("triage");
                 setQueueFocusProviderId(selectedProvider.id);
                 setQueueFocusStatus("all");
+                requestAnimationFrame(() => {
+                  queueRef.current?.scrollIntoView({ block: "start" });
+                  queueRef.current?.focus({ preventScroll: true });
+                });
               }}
               onIncidentSelect={(incidentId) => {
                 const incident = data.incidents.find(
@@ -1221,7 +1226,13 @@ export function Dashboard() {
           </section>
         </section>
 
-        <div id="replay-queue" className="scroll-mt-4">
+        <div
+          id="replay-queue"
+          ref={queueRef}
+          tabIndex={-1}
+          aria-label="Generation Queue"
+          className="scroll-mt-4 outline-none"
+        >
           <GenerationTable
             rows={data.generations}
             providers={data.providers}
