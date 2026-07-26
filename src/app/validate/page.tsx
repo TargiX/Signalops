@@ -9,6 +9,30 @@ import type { SignalEventValidationResponse } from "@/lib/signalops/events";
 // itself is the server contract, imported type-only to stay in sync without drift.
 type ValidationResponse = Partial<SignalEventValidationResponse>;
 
+type IngestReceipt = {
+  acceptedEvents?: number;
+  rejectedEvents?: number;
+  storedEvents?: number;
+  duplicateEvents?: number;
+  evictedEvents?: number;
+  retainedEvents?: number;
+  storage?: {
+    adapter?: string;
+    durable?: boolean;
+    capacity?: number | null;
+  };
+};
+
+type IngestResponse = {
+  ok?: boolean;
+  code?: string;
+  error?: string;
+  requestId?: string;
+  partial?: boolean;
+  receipt?: IngestReceipt;
+  rejected?: Array<{ index: number; error: string }>;
+};
+
 const samples = [
   {
     id: "pilot-ready",
@@ -164,6 +188,10 @@ export default function ValidatePage() {
   const [copied, setCopied] = useState(false);
   const [copiedHandoff, setCopiedHandoff] = useState(false);
   const [handoffError, setHandoffError] = useState<string | null>(null);
+  const [ingestToken, setIngestToken] = useState("");
+  const [ingestResult, setIngestResult] = useState<IngestResponse | null>(null);
+  const [ingestError, setIngestError] = useState<string | null>(null);
+  const [isIngesting, setIsIngesting] = useState(false);
 
   const parsedPayload = useMemo(() => {
     try {
@@ -247,6 +275,55 @@ export default function ValidatePage() {
       setCopiedHandoff(true);
     } catch (clipboardError) {
       setHandoffError(clipboardError instanceof Error ? clipboardError.message : "Copy failed");
+    }
+  }
+
+  async function runProtectedIngest() {
+    setIngestError(null);
+    setIngestResult(null);
+
+    if (!parsedPayload.ok) {
+      setIngestError(`Fix local JSON before ingesting: ${parsedPayload.error}`);
+      return;
+    }
+
+    const token = ingestToken.trim();
+    if (!token) {
+      setIngestError("Enter a development bearer token before sending to protected ingest.");
+      return;
+    }
+
+    setIsIngesting(true);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+
+    try {
+      const response = await fetch("/api/events", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+        },
+        body: formatJson(parsedPayload.value),
+        signal: controller.signal,
+      });
+      const json = (await response.json()) as IngestResponse;
+      setIngestResult(json);
+
+      if (!response.ok || !json.ok) {
+        setIngestError(json.error ?? json.code ?? `Protected ingest failed with ${response.status}`);
+      }
+    } catch (requestError) {
+      setIngestError(
+        requestError instanceof Error && requestError.name === "AbortError"
+          ? "Protected ingest timed out after 15 seconds."
+          : requestError instanceof Error
+            ? requestError.message
+            : "Protected ingest request failed.",
+      );
+    } finally {
+      clearTimeout(timeout);
+      setIsIngesting(false);
     }
   }
 
@@ -362,6 +439,8 @@ export default function ValidatePage() {
                 setCopied(false);
                 setCopiedHandoff(false);
                 setHandoffError(null);
+                setIngestResult(null);
+                setIngestError(null);
                 setError(null);
                 setResult(null);
               }}
@@ -574,6 +653,94 @@ export default function ValidatePage() {
                     </p>
                   ) : null}
                 </div>
+
+                <section
+                  aria-labelledby="protected-ingest-title"
+                  className="rounded-2xl border border-[var(--border)] bg-[var(--surface-mute)] p-4"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--text-dim)]">
+                        Protected ingest
+                      </p>
+                      <h3 id="protected-ingest-title" className="mt-2 text-base font-semibold text-[var(--text-strong)]">
+                        Send this payload to your configured development ingress
+                      </h3>
+                      <p className="mt-2 max-w-xl text-sm leading-6 text-[var(--text-dim)]">
+                        This calls <code>POST /api/events</code> with the same JSON and returns its real
+                        storage receipt. The token is used for this request only and is never saved.
+                      </p>
+                    </div>
+                    <span className="rounded-full border border-[var(--warning)]/20 bg-[var(--warning-soft)] px-3 py-1.5 text-xs font-semibold text-[var(--warning)]">
+                      Development only
+                    </span>
+                  </div>
+
+                  <label className="mt-4 block">
+                    <span className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--text-dim)]">
+                      Development bearer token
+                    </span>
+                    <input
+                      aria-describedby="protected-ingest-token-note"
+                      autoComplete="off"
+                      onChange={(event) => {
+                        setIngestToken(event.target.value);
+                        setIngestError(null);
+                        setIngestResult(null);
+                      }}
+                      placeholder="Paste SIGNALOPS_INGEST_TOKEN"
+                      type="password"
+                      value={ingestToken}
+                      className="mt-2 h-11 w-full rounded-xl border border-[var(--border)] bg-white px-3 text-sm text-[var(--text-strong)] outline-hidden transition focus:border-[var(--accent)]"
+                    />
+                    <span id="protected-ingest-token-note" className="mt-2 block text-xs leading-5 text-[var(--text-dim)]">
+                      Production intentionally rejects the development memory adapter. A configured local receipt
+                      states its storage durability explicitly.
+                    </span>
+                  </label>
+
+                  <div className="mt-4 flex flex-wrap items-center gap-3">
+                    <button
+                      type="button"
+                      disabled={isIngesting || isValidating}
+                      onClick={runProtectedIngest}
+                      className="inline-flex h-10 items-center justify-center rounded-full bg-[var(--text-strong)] px-4 text-sm font-semibold text-white transition hover:bg-[var(--text)] disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {isIngesting ? <Loader2 className="mr-2 size-4 animate-spin" /> : <ShieldAlert className="mr-2 size-4" />}
+                      {isIngesting ? "Sending to protected ingest" : "Send to protected ingest"}
+                    </button>
+                    {ingestResult?.requestId ? <span className="text-xs text-[var(--text-dim)]">Request id: {ingestResult.requestId}</span> : null}
+                  </div>
+
+                  {ingestError ? (
+                    <p role="alert" className="mt-4 rounded-xl border border-[var(--danger)]/15 bg-[var(--danger-soft)] p-3 text-sm text-[var(--danger)]">
+                      Protected ingest did not accept this request: {ingestError}
+                    </p>
+                  ) : null}
+
+                  {ingestResult?.ok && ingestResult.receipt ? (
+                    <div className="mt-4 grid gap-3">
+                      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                        {[
+                          ["stored", ingestResult.receipt.storedEvents ?? 0],
+                          ["duplicates", ingestResult.receipt.duplicateEvents ?? 0],
+                          ["evicted", ingestResult.receipt.evictedEvents ?? 0],
+                          ["retained", ingestResult.receipt.retainedEvents ?? 0],
+                        ].map(([label, value]) => (
+                          <div key={label as string} className="rounded-xl border border-[var(--border)] bg-white p-3">
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--text-dim)]">{label}</p>
+                            <p className="mt-1 text-xl font-semibold text-[var(--text-strong)]">{value}</p>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-sm text-[var(--text)]">
+                        Receipt: {ingestResult.receipt.storage?.adapter ?? "unknown"} adapter · {ingestResult.receipt.storage?.durable ? "durable storage" : "non-durable storage"}
+                        {ingestResult.receipt.storage?.capacity != null ? ` · capacity ${ingestResult.receipt.storage.capacity}` : ""}
+                        {ingestResult.partial ? " · partial acceptance" : ""}
+                      </p>
+                    </div>
+                  ) : null}
+                </section>
               </div>
             ) : (
               <div className="mt-5 rounded-2xl border border-dashed border-[var(--border)] bg-[var(--surface-mute)] p-5 text-sm leading-6 text-[var(--text-dim)]">
