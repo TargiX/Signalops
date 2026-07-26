@@ -5,6 +5,8 @@ import {
   AlertTriangle,
   ArrowLeft,
   CheckCircle2,
+  Clipboard,
+  ClipboardCheck,
   CircleDollarSign,
   Loader2,
   ShieldCheck,
@@ -12,12 +14,54 @@ import {
   Sparkles,
 } from "lucide-react";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import { fetchOpsSnapshot } from "@/lib/mock-data";
 import { cn, formatCurrency, formatNumber } from "@/lib/utils";
 
 type GuardState = "draft" | "simulated" | "active";
+
+type CopyState = { content: string; status: "copied" | "error"; error?: string } | null;
+
+function normalizeCeiling(value: number) {
+  return Number.isFinite(value) ? Math.max(0, value) : 0;
+}
+
+function projectConsumerGuard(
+  consumer: { spend: number; generations: number; credits: number },
+  ceiling: number,
+) {
+  const normalizedCeiling = normalizeCeiling(ceiling);
+  const overage = Math.max(0, consumer.spend - normalizedCeiling);
+  const affectedShare = consumer.spend === 0 ? 0 : overage / consumer.spend;
+
+  return {
+    overage,
+    affectedGenerations: Math.min(consumer.generations, Math.ceil(consumer.generations * affectedShare)),
+    remainingCredits: Math.max(0, consumer.credits - Math.round(consumer.credits * affectedShare)),
+  };
+}
+
+function formatSessionGuardHandoff({
+  consumer,
+  ceiling,
+  projection,
+}: {
+  consumer: { id: string; name: string; plan: string; spend: number; generations: number };
+  ceiling: number;
+  projection: { overage: number; affectedGenerations: number; remainingCredits: number };
+}) {
+  return [
+    `# Session guard handoff — ${consumer.name}`,
+    "",
+    `Account: ${consumer.plan} · ${formatNumber(consumer.generations)} generations in the current 24-hour snapshot`,
+    `Decision: ACTIVE — hold requests after account spend reaches ${formatCurrency(ceiling)}`,
+    `Current spend: ${formatCurrency(consumer.spend)} · over ceiling: ${formatCurrency(projection.overage)}`,
+    `Projected impact: ${formatNumber(projection.affectedGenerations)} generation requests held · ${formatNumber(projection.remainingCredits)} credits remain outside the held share`,
+    "State: SESSION ONLY — no billing, credits, or server-side policy changed",
+    `Account route: /consumers/${consumer.id}`,
+  ].join("\n");
+}
 
 export function ConsumerDetail({ consumerId }: { consumerId: string }) {
   const { data, isLoading } = useQuery({
@@ -28,22 +72,16 @@ export function ConsumerDetail({ consumerId }: { consumerId: string }) {
   const [ceilingOverride, setCeilingOverride] = useState<number | null>(null);
   const [simulatedCeiling, setSimulatedCeiling] = useState<number | null>(null);
   const [activeCeiling, setActiveCeiling] = useState<number | null>(null);
-  const ceiling = ceilingOverride ?? (consumer ? Math.max(1, Math.floor(consumer.spend * 0.8)) : 0);
+  const [copyState, setCopyState] = useState<CopyState>(null);
+  const copyAttempt = useRef(0);
+  const ceiling = normalizeCeiling(ceilingOverride ?? (consumer ? Math.max(1, Math.floor(consumer.spend * 0.8)) : 0));
 
   const projection = useMemo(() => {
     if (!consumer) {
       return null;
     }
 
-    const normalizedCeiling = Math.max(0, Number.isFinite(ceiling) ? ceiling : 0);
-    const overage = Math.max(0, consumer.spend - normalizedCeiling);
-    const affectedShare = consumer.spend === 0 ? 0 : overage / consumer.spend;
-
-    return {
-      overage,
-      affectedGenerations: Math.min(consumer.generations, Math.ceil(consumer.generations * affectedShare)),
-      remainingCredits: Math.max(0, consumer.credits - Math.round(consumer.credits * affectedShare)),
-    };
+    return projectConsumerGuard(consumer, ceiling);
   }, [ceiling, consumer]);
 
   const guardState: GuardState = activeCeiling !== null ? "active" : simulatedCeiling === ceiling ? "simulated" : "draft";
@@ -74,6 +112,33 @@ export function ConsumerDetail({ consumerId }: { consumerId: string }) {
   }
 
   const inputChanged = activeCeiling === null && simulatedCeiling !== ceiling;
+  const activeProjection = activeCeiling === null ? null : projectConsumerGuard(consumer, activeCeiling);
+  const activeHandoff =
+    activeCeiling === null || activeProjection === null
+      ? null
+      : formatSessionGuardHandoff({ consumer, ceiling: activeCeiling, projection: activeProjection });
+
+  async function copySessionGuardHandoff() {
+    if (!activeHandoff) {
+      return;
+    }
+
+    const attempt = ++copyAttempt.current;
+    try {
+      await navigator.clipboard.writeText(activeHandoff);
+      if (copyAttempt.current === attempt) {
+        setCopyState({ content: activeHandoff, status: "copied" });
+      }
+    } catch (copyError) {
+      if (copyAttempt.current === attempt) {
+        setCopyState({
+          content: activeHandoff,
+          status: "error",
+          error: copyError instanceof Error ? copyError.message : "Copy failed. Try again.",
+        });
+      }
+    }
+  }
 
   return (
     <main className="min-h-screen overflow-x-hidden bg-[var(--background)] text-[var(--text)]">
@@ -126,7 +191,9 @@ export function ConsumerDetail({ consumerId }: { consumerId: string }) {
                   min="0"
                   onChange={(event) => {
                     const nextCeiling = Number(event.target.value);
-                    setCeilingOverride(Number.isFinite(nextCeiling) ? nextCeiling : null);
+                    copyAttempt.current += 1;
+                    setCopyState(null);
+                    setCeilingOverride(normalizeCeiling(nextCeiling));
                     setSimulatedCeiling(null);
                     setActiveCeiling(null);
                   }}
@@ -139,7 +206,11 @@ export function ConsumerDetail({ consumerId }: { consumerId: string }) {
             <div className="mt-5 grid gap-3 sm:grid-cols-2">
               <button
                 type="button"
-                onClick={() => setSimulatedCeiling(ceiling)}
+                onClick={() => {
+                  copyAttempt.current += 1;
+                  setCopyState(null);
+                  setSimulatedCeiling(ceiling);
+                }}
                 className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface-mute)] px-4 text-sm font-semibold text-[var(--text)] transition hover:border-[var(--accent)] hover:text-[var(--accent)]"
               >
                 <Sparkles className="size-4" />
@@ -159,6 +230,8 @@ export function ConsumerDetail({ consumerId }: { consumerId: string }) {
               <button
                 type="button"
                 onClick={() => {
+                  copyAttempt.current += 1;
+                  setCopyState(null);
                   setActiveCeiling(null);
                   setSimulatedCeiling(null);
                 }}
@@ -187,6 +260,44 @@ export function ConsumerDetail({ consumerId }: { consumerId: string }) {
               <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-[var(--success)]" />
               {inputChanged ? "Draft values are not active. Preview, then explicitly activate the session-only guard." : "This guard is local to the current screen and is intentionally not a persisted billing control."}
             </p>
+            {activeHandoff ? (
+              <section
+                aria-labelledby="session-guard-handoff-title"
+                className="mt-5 rounded-lg border border-[var(--success)]/20 bg-[var(--success-soft)] p-4"
+                id="handoff"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--success)]">Shareable record</p>
+                    <h3 className="mt-1 text-base font-semibold text-[var(--text-strong)]" id="session-guard-handoff-title">
+                      Session guard handoff
+                    </h3>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={copySessionGuardHandoff}
+                    className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-[var(--success)]/25 bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--text)] transition hover:border-[var(--success)] hover:text-[var(--success)]"
+                  >
+                    {copyState?.content === activeHandoff && copyState.status === "copied" ? (
+                      <ClipboardCheck className="size-4" />
+                    ) : (
+                      <Clipboard className="size-4" />
+                    )}
+                    {copyState?.content === activeHandoff && copyState.status === "copied"
+                      ? "Handoff copied"
+                      : "Copy session guard handoff"}
+                  </button>
+                </div>
+                <pre className="mt-4 overflow-x-auto whitespace-pre-wrap rounded-md border border-[var(--success)]/15 bg-[var(--surface)] p-3 font-mono text-xs leading-5 text-[var(--text)]">
+                  {activeHandoff}
+                </pre>
+                {copyState?.content === activeHandoff && copyState.status === "error" ? (
+                  <p className="mt-3 text-sm font-medium text-[var(--danger)]" role="alert">
+                    {copyState.error}
+                  </p>
+                ) : null}
+              </section>
+            ) : null}
           </section>
         </section>
       </div>
