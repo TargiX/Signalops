@@ -21,9 +21,10 @@ import {
 import Image from "next/image";
 import Link from "next/link";
 import { motion, type Variants } from "framer-motion";
+import { useState } from "react";
 
 import { buttonVariants } from "@/components/ui/button";
-import { getOpsSnapshot } from "@/lib/mock-data";
+import { getOpsSnapshot, type Generation, type Incident, type Provider } from "@/lib/mock-data";
 import { cn, formatCurrency, formatMs, formatNumber } from "@/lib/utils";
 
 const navItems = ["Product", "Solutions", "Resources", "Pricing", "Docs"];
@@ -90,8 +91,8 @@ const itemVariants: Variants = {
 
 export function ProductHome() {
   const snapshot = getOpsSnapshot("24h");
-  const incident = snapshot.incidents[0];
-  const provider = snapshot.providers.find((item) => item.id === incident.providerId) ?? snapshot.providers[0];
+  const [selectedIncidentId, setSelectedIncidentId] = useState(() => snapshot.incidents[0]?.id ?? "");
+  const incident = snapshot.incidents.find((item) => item.id === selectedIncidentId) ?? snapshot.incidents[0];
   const activeJobs = snapshot.generations.filter((job) =>
     ["queued", "running", "retrying"].includes(job.status),
   ).length;
@@ -199,26 +200,13 @@ export function ProductHome() {
                 <MetricTile icon={Bot} label="Active jobs" value={formatNumber(activeJobs)} />
                 <MetricTile icon={CircleDollarSign} label="Spend (today)" value={formatCurrency(totalSpend)} />
               </div>
-              <div className="mt-5 rounded-lg border border-[var(--border)] bg-white/72 p-5 shadow-sm">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="rounded px-2 py-1 text-[10px] font-bold text-[#e45f5f] ring-1 ring-[#ffd8d8]">critical</span>
-                  <span className="rounded px-2 py-1 font-mono text-[10px] font-bold text-[var(--mute)] ring-1 ring-[var(--border)]">
-                    {incident.id}
-                  </span>
-                  <span className="text-[11px] font-semibold text-[var(--mute)]">Opened {incident.age} ago</span>
-                </div>
-                <h3 className="mt-4 text-[15px] font-bold text-[var(--text-strong)]">{incident.title}</h3>
-                <p className="mt-1 text-[13px] leading-6 text-[var(--text-dim)]">{incident.detail}</p>
-                <div className="mt-4 grid gap-3 sm:grid-cols-3">
-                  <MiniStat label="Provider" value={provider.name} />
-                  <MiniStat label="p95" value={formatMs(provider.p95Ms)} />
-                  <MiniStat label="Failure rate" value={`${provider.failureRate}%`} />
-                </div>
-                <Link href="/incidents/inc_411" className="mt-5 inline-flex items-center gap-2 text-[13px] font-semibold text-[var(--accent)]">
-                  View incident
-                  <ArrowRight className="size-4" />
-                </Link>
-              </div>
+              <IncidentLaunchpad
+                incidents={snapshot.incidents}
+                providers={snapshot.providers}
+                generations={snapshot.generations}
+                incident={incident}
+                onSelect={setSelectedIncidentId}
+              />
             </section>
           </motion.div>
 
@@ -520,6 +508,93 @@ function MiniStat({ label, value }: { label: string; value: string }) {
       <div className="font-mono text-[9px] font-bold uppercase text-[var(--mute)]">{label}</div>
       <div className="mt-1 text-[13px] font-bold text-[var(--text-strong)]">{value}</div>
     </div>
+  );
+}
+
+function IncidentLaunchpad({
+  incidents,
+  providers,
+  generations,
+  incident,
+  onSelect,
+}: {
+  incidents: Incident[];
+  providers: Provider[];
+  generations: Generation[];
+  incident: Incident;
+  onSelect: (incidentId: string) => void;
+}) {
+  const provider = providers.find((item) => item.id === incident.providerId) ?? providers[0];
+  const affectedJobs = generations.filter(
+    (job) => job.providerId === incident.providerId && ["queued", "running", "retrying", "failed"].includes(job.status),
+  ).length;
+  const severityStyles = {
+    critical: "border-[#ffd8d8] bg-[#fff6f6] text-[#d94f4f]",
+    warning: "border-[#f6dfb8] bg-[#fffbf3] text-[#b77720]",
+    info: "border-[#d8e3ff] bg-[#f5f8ff] text-[var(--accent)]",
+  } satisfies Record<Incident["severity"], string>;
+
+  return (
+    <section className="mt-5 rounded-lg border border-[var(--border)] bg-white/72 p-5 shadow-sm" aria-label="Live incident queue">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="font-mono text-[10px] font-bold uppercase text-[var(--mute)]">Live incident queue</p>
+          <p className="mt-1 text-[12px] text-[var(--text-dim)]">Choose a signal, then open its investigation.</p>
+        </div>
+        <span className="rounded-full border border-[var(--border)] bg-white px-2.5 py-1 font-mono text-[10px] font-bold text-[var(--mute)]">
+          {incidents.length} active
+        </span>
+      </div>
+      <div className="mt-4 grid gap-2 sm:grid-cols-3">
+        {incidents.map((item) => {
+          const selected = item.id === incident.id;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              aria-pressed={selected}
+              onClick={() => onSelect(item.id)}
+              className={cn(
+                "rounded-lg border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2",
+                selected
+                  ? "border-[var(--accent)] bg-[var(--accent-soft)] shadow-sm"
+                  : "border-[var(--border)] bg-white/80 hover:border-[#b8c7ed] hover:bg-white",
+              )}
+            >
+              <span className="flex items-center justify-between gap-2">
+                <span className={cn("rounded border px-1.5 py-0.5 text-[9px] font-bold uppercase", severityStyles[item.severity])}>
+                  {item.severity}
+                </span>
+                <span className="font-mono text-[10px] font-bold text-[var(--mute)]">{item.id}</span>
+              </span>
+              <span className="mt-3 block text-[12px] font-bold leading-5 text-[var(--text-strong)]">{item.title}</span>
+              <span className="mt-1 block text-[11px] font-semibold text-[var(--mute)]">Opened {item.age} ago</span>
+            </button>
+          );
+        })}
+      </div>
+      <div className="mt-4 rounded-lg border border-[var(--border)] bg-white/82 p-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={cn("rounded border px-2 py-1 text-[10px] font-bold uppercase", severityStyles[incident.severity])}>
+            {incident.severity}
+          </span>
+          <span className="font-mono text-[10px] font-bold text-[var(--mute)]">{incident.id}</span>
+          <span className="text-[11px] font-semibold text-[var(--mute)]">Opened {incident.age} ago</span>
+        </div>
+        <h3 className="mt-3 text-[15px] font-bold text-[var(--text-strong)]">{incident.title}</h3>
+        <p className="mt-1 text-[13px] leading-6 text-[var(--text-dim)]">{incident.detail}</p>
+        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <MiniStat label="Provider" value={provider.name} />
+          <MiniStat label="p95" value={formatMs(provider.p95Ms)} />
+          <MiniStat label="Failure rate" value={`${provider.failureRate}%`} />
+          <MiniStat label="Affected queue" value={formatNumber(affectedJobs)} />
+        </div>
+        <Link href={`/incidents/${incident.id}`} className="mt-5 inline-flex items-center gap-2 text-[13px] font-semibold text-[var(--accent)]">
+          Open incident triage
+          <ArrowRight className="size-4" />
+        </Link>
+      </div>
+    </section>
   );
 }
 
