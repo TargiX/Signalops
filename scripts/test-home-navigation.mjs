@@ -271,6 +271,28 @@ assert.match(
   "Expected escalation feedback to be tied to the exact generated content version.",
 );
 
+const validateSource = await readFile(validatePagePath, "utf8");
+assert.match(
+  validateSource,
+  /fetch\("\/api\/events",\s*\{[\s\S]*?authorization:\s*`Bearer \$\{token\}`/,
+  "Expected the validator workspace to send an operator-supplied bearer token only to protected ingest.",
+);
+assert.match(
+  validateSource,
+  /Protected ingest did not accept this request:/,
+  "Expected protected-ingest failures to remain visible and actionable.",
+);
+assert.match(
+  validateSource,
+  /Receipt:\s*\{ingestResult\.receipt\.storage\?\.adapter/,
+  "Expected successful protected ingest to render the actual adapter/durability receipt.",
+);
+assert.doesNotMatch(
+  validateSource,
+  /localStorage\.(?:getItem|setItem).*ingestToken|ingestToken.*localStorage\.(?:getItem|setItem)/,
+  "Protected-ingest tokens must stay in component memory and never be persisted locally.",
+);
+
 console.log(
   "Navigation and incident handoff contracts OK: routes, decision state, scope, and canonical URL.",
 );
