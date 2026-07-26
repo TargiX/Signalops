@@ -1170,36 +1170,42 @@ export function Dashboard() {
               className="space-y-3"
             >
               {data.consumers.map((consumer, index) => (
-                <motion.div
+                <Link
                   key={consumer.id}
-                  variants={{
-                    hidden: { opacity: 0, x: -10 },
-                    show: { opacity: 1, x: 0, transition: { type: "spring", stiffness: 300, damping: 25 } }
-                  }}
-                  className="grid grid-cols-[auto_1fr_auto] items-center gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 transition-colors hover:bg-[var(--surface-mute)]"
+                  href={`/consumers/${consumer.id}`}
+                  aria-label={`Open ${consumer.name} account guard`}
+                  className="block rounded-lg focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--surface)] focus-visible:outline-none"
                 >
-                  <div className="grid size-9 place-items-center rounded-md border border-[var(--border)] bg-[var(--surface-mute)] font-mono text-sm font-semibold text-[var(--text)]">
-                    {index + 1}
-                  </div>
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-semibold text-[var(--text)]">
-                      {consumer.name}
+                  <motion.div
+                    variants={{
+                      hidden: { opacity: 0, x: -10 },
+                      show: { opacity: 1, x: 0, transition: { type: "spring", stiffness: 300, damping: 25 } }
+                    }}
+                    className="grid grid-cols-[auto_1fr_auto] items-center gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 transition-colors hover:bg-[var(--surface-mute)]"
+                  >
+                    <div className="grid size-9 place-items-center rounded-md border border-[var(--border)] bg-[var(--surface-mute)] font-mono text-sm font-semibold text-[var(--text)]">
+                      {index + 1}
                     </div>
-                    <div className="mt-1 flex flex-wrap gap-2 text-xs text-[var(--mute)]">
-                      <span>{consumer.plan}</span>
-                      <span>{formatNumber(consumer.generations)} generations</span>
-                      <span>{consumer.failureRate}% fail</span>
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-semibold text-[var(--text)]">
+                        {consumer.name}
+                      </div>
+                      <div className="mt-1 flex flex-wrap gap-2 text-xs text-[var(--mute)]">
+                        <span>{consumer.plan}</span>
+                        <span>{formatNumber(consumer.generations)} generations</span>
+                        <span>{consumer.failureRate}% fail</span>
+                      </div>
                     </div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-sm font-semibold text-[var(--text)]">
-                      {formatCurrency(consumer.spend)}
+                    <div className="text-right">
+                      <div className="text-sm font-semibold text-[var(--text)]">
+                        {formatCurrency(consumer.spend)}
+                      </div>
+                      <div className="text-xs text-[var(--mute)]">
+                        {formatNumber(consumer.credits)} credits
+                      </div>
                     </div>
-                    <div className="text-xs text-[var(--mute)]">
-                      {formatNumber(consumer.credits)} credits
-                    </div>
-                  </div>
-                </motion.div>
+                  </motion.div>
+                </Link>
               ))}
             </motion.div>
           </Panel>
