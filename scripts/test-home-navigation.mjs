@@ -6,6 +6,7 @@ import {
   buildCanonicalIncidentUrl,
   buildIncidentHandoff,
 } from "../src/lib/incident-handoff.ts";
+import { buildProviderEscalation } from "../src/lib/provider-escalation.ts";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..");
@@ -180,6 +181,44 @@ assert.match(
   /State: ACTIVE — applied at 2026-07-19T12:00:00.000Z in the current 24h snapshot/,
 );
 
+const providerEscalation = buildProviderEscalation({
+  incident: {
+    id: "inc_411",
+    title: "Qwen Image timeout cluster",
+    severity: "critical",
+  },
+  provider: {
+    name: "Alibaba",
+    region: "ap-southeast",
+    p95Ms: 18_440,
+    failureRate: 8.2,
+  },
+  affectedJobCount: 72,
+  guard: "latency",
+  trafficShare: 68,
+  decisionState: "simulated",
+  projected: {
+    movedJobs: 196,
+    p95Ms: 14_452,
+    failureRate: 5.9,
+  },
+  canonicalUrl: canonicalIncidentUrl,
+});
+
+assert.match(
+  providerEscalation,
+  /Subject: \[CRITICAL\] Alibaba assistance requested — inc_411/,
+);
+assert.match(
+  providerEscalation,
+  /Routing status: PREVIEW ONLY — we simulated draining 68% of matching traffic; no production routing change has been applied\./,
+  "Expected simulated provider escalations to state that routing remains unapplied.",
+);
+assert.match(
+  providerEscalation,
+  /Please confirm current regional status, any known degradation, and an expected recovery window\./,
+);
+
 const incidentDetailSource = await readFile(incidentDetailSourcePath, "utf8");
 assert.match(
   incidentDetailSource,
@@ -215,6 +254,21 @@ assert.match(
   incidentDetailSource,
   /queryKey:\s*\["ops-snapshot",\s*"24h"\]/,
   "Expected incident handoffs to share the dashboard's 24h routing snapshot cache.",
+);
+assert.match(
+  incidentDetailSource,
+  /<ProviderEscalation[\s\S]*?decisionState=\{decisionState\}/,
+  "Expected the provider escalation to derive from the same incident decision state.",
+);
+assert.match(
+  incidentDetailSource,
+  />\s*Copy provider escalation\s*</,
+  "Expected a keyboard-operable provider escalation copy control.",
+);
+assert.match(
+  incidentDetailSource,
+  /copyState\.content === content/,
+  "Expected escalation feedback to be tied to the exact generated content version.",
 );
 
 console.log(

@@ -10,6 +10,7 @@ import {
   FileText,
   GitBranch,
   Loader2,
+  Send,
   ShieldCheck,
   SlidersHorizontal,
   Target,
@@ -22,6 +23,7 @@ import {
   buildCanonicalIncidentUrl,
   buildIncidentHandoff,
 } from "@/lib/incident-handoff";
+import { buildProviderEscalation } from "@/lib/provider-escalation";
 import {
   fetchOpsSnapshot,
   type Generation,
@@ -178,6 +180,17 @@ export function IncidentDetail({ incidentId }: { incidentId: string }) {
   const timeline = buildIncidentTimeline(provider, decisionState);
   const canonicalUrl = buildCanonicalIncidentUrl(incident.id);
   const handoff = buildIncidentHandoff({
+    incident,
+    provider,
+    affectedJobCount: affectedJobs.length,
+    guard: decisionGuard,
+    trafficShare: decisionTrafficShare,
+    decisionState,
+    appliedAt: activeIncidentRule?.appliedAt,
+    projected: decisionProjection,
+    canonicalUrl,
+  });
+  const providerEscalation = buildProviderEscalation({
     incident,
     provider,
     affectedJobCount: affectedJobs.length,
@@ -424,6 +437,12 @@ export function IncidentDetail({ incidentId }: { incidentId: string }) {
           decisionState={decisionState}
         />
 
+        <ProviderEscalation
+          content={providerEscalation}
+          providerName={provider.name}
+          decisionState={decisionState}
+        />
+
         <section className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
           <Panel title="Before / After" eyebrow="Mitigation preview">
             <div className="grid gap-4 lg:grid-cols-2">
@@ -645,6 +664,148 @@ function IncidentHandoff({
                 : decisionState === "simulated"
                   ? "simulated · not applied"
                   : "proposed"}
+            </span>
+          </div>
+          <pre className="max-w-full whitespace-pre-wrap break-words font-mono text-[12px] leading-6 text-[var(--text-dim)] [overflow-wrap:anywhere]">
+            {content}
+          </pre>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ProviderEscalation({
+  content,
+  providerName,
+  decisionState,
+}: {
+  content: string;
+  providerName: string;
+  decisionState: DecisionState;
+}) {
+  const [copyState, setCopyState] = useState<{
+    status: "idle" | "copied" | "failed";
+    content: string;
+  }>({ status: "idle", content });
+  const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const copyAttempt = useRef(0);
+  const visibleCopyState =
+    copyState.content === content ? copyState.status : "idle";
+
+  useEffect(() => {
+    return () => {
+      copyAttempt.current += 1;
+      if (resetTimer.current) {
+        clearTimeout(resetTimer.current);
+      }
+    };
+  }, []);
+
+  async function copyEscalation() {
+    const attempt = ++copyAttempt.current;
+    const copiedContent = content;
+
+    if (resetTimer.current) {
+      clearTimeout(resetTimer.current);
+      resetTimer.current = null;
+    }
+    setCopyState({ status: "idle", content: copiedContent });
+
+    try {
+      await navigator.clipboard.writeText(copiedContent);
+
+      if (copyAttempt.current !== attempt) {
+        return;
+      }
+
+      setCopyState({ status: "copied", content: copiedContent });
+    } catch {
+      if (copyAttempt.current !== attempt) {
+        return;
+      }
+
+      setCopyState({ status: "failed", content: copiedContent });
+    }
+
+    resetTimer.current = setTimeout(() => {
+      if (copyAttempt.current === attempt) {
+        setCopyState({ status: "idle", content: copiedContent });
+      }
+    }, 2200);
+  }
+
+  return (
+    <section
+      aria-labelledby="provider-escalation-title"
+      data-escalation-state={decisionState}
+      className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 shadow-[var(--shadow-1)]"
+    >
+      <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,0.72fr)_minmax(0,1.28fr)] lg:items-start">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.03em] text-[var(--mute)]">
+            <Send className="size-3.5" />
+            Provider escalation
+          </div>
+          <h2
+            id="provider-escalation-title"
+            className="mt-2 text-xl font-semibold tracking-[-0.02em]"
+          >
+            Request a provider response with the current facts
+          </h2>
+          <p className="mt-2 max-w-xl text-sm leading-6 text-[var(--text-dim)]">
+            Generate a channel-ready escalation for {providerName}. It is
+            copied for an operator to send, never sent from SignalOps, and
+            keeps the routing state explicit.
+          </p>
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={copyEscalation}
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-[var(--accent)] bg-[var(--accent)] px-4 text-sm font-semibold text-white shadow-[var(--shadow-1)] transition-colors hover:bg-[var(--accent-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--surface)] focus-visible:outline-none"
+            >
+              <Copy className="size-4" />
+              Copy provider escalation
+            </button>
+            <span
+              role="status"
+              aria-live="polite"
+              className={cn(
+                "text-xs font-medium",
+                visibleCopyState === "failed"
+                  ? "text-[var(--danger)]"
+                  : "text-[var(--success)]",
+              )}
+            >
+              {visibleCopyState === "copied"
+                ? "Escalation copied to clipboard"
+                : visibleCopyState === "failed"
+                  ? "Clipboard unavailable — select the brief below to copy"
+                  : ""}
+            </span>
+          </div>
+        </div>
+
+        <div className="min-w-0 rounded-lg border border-[var(--border)] bg-[var(--surface-mute)] p-3 sm:p-4">
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.06em] text-[var(--mute)]">
+              Copy-only · ready to send
+            </span>
+            <span
+              className={cn(
+                "rounded-md px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.04em]",
+                decisionState === "applied"
+                  ? "bg-[var(--info-soft)] text-[var(--info)]"
+                  : decisionState === "simulated"
+                    ? "bg-[var(--success-soft)] text-[var(--success)]"
+                    : "bg-[var(--warning-soft)] text-[var(--warning)]",
+              )}
+            >
+              {decisionState === "applied"
+                ? "active routing"
+                : decisionState === "simulated"
+                  ? "preview only"
+                  : "draft only"}
             </span>
           </div>
           <pre className="max-w-full whitespace-pre-wrap break-words font-mono text-[12px] leading-6 text-[var(--text-dim)] [overflow-wrap:anywhere]">
