@@ -8,13 +8,11 @@ import {
   CheckCircle2,
   CircleDollarSign,
   Clock3,
-  Cpu,
   Download,
   Gauge,
   GitBranch,
   Loader2,
   RefreshCcw,
-  ShieldCheck,
   SlidersHorizontal,
   Sparkles,
   Target,
@@ -68,6 +66,7 @@ import {
   replayUrlStateMatches,
 } from "@/lib/replay-url";
 import { dispatchCsvDownload } from "@/lib/csv-download";
+import { buildSpendGuard, type SpendGuardFinding } from "@/lib/spend-guard";
 import { cn, formatCurrency, formatMs, formatNumber } from "@/lib/utils";
 
 const ranges = ["24h", "7d", "30d"] as const;
@@ -1210,26 +1209,14 @@ export function Dashboard() {
             </motion.div>
           </Panel>
 
-          <section className="grid gap-4 md:grid-cols-3">
-            <MiniBrief
-              icon={ShieldCheck}
-              title="SLO Guard"
-              value="98.1%"
-              text="Success rate stays acceptable, but Alibaba should be drained."
-            />
-            <MiniBrief
-              icon={Cpu}
-              title="Model Router"
-              value="2 rules"
-              text="Move photo-me traffic to Nano Banana 2 until fal.ai recovers."
-            />
-            <MiniBrief
-              icon={ArrowUpRight}
-              title="Revenue Signal"
-              value="+14%"
-              text="Studio users are driving high-intent template runs."
-            />
-          </section>
+          <SpendGuardPanel
+            findings={buildSpendGuard({
+              providers: data.providers,
+              models: data.models,
+              incidents: data.incidents,
+            })}
+            range={range}
+          />
         </section>
 
         <div
@@ -1957,33 +1944,67 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-function MiniBrief({
-  icon: Icon,
-  title,
-  value,
-  text,
+function SpendGuardPanel({
+  findings,
+  range,
 }: {
-  icon: React.ElementType;
-  title: string;
-  value: string;
-  text: string;
+  findings: SpendGuardFinding[];
+  range: Range;
 }) {
+  const lead = findings[0];
+
+  if (!lead) {
+    return null;
+  }
+
   return (
     <motion.section
-      initial={{ opacity: 0, scale: 0.95 }}
-      whileInView={{ opacity: 1, scale: 1 }}
+      initial={{ opacity: 0, y: 12 }}
+      whileInView={{ opacity: 1, y: 0 }}
       viewport={{ once: true }}
-      transition={{ duration: 0.4, ease: "backOut" }}
-      className="min-h-[188px] min-w-0 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[var(--shadow-1)] transition-all hover:-translate-y-1 hover:shadow-[var(--shadow-2)] cursor-default"
+      transition={{ duration: 0.4, ease: "easeOut" }}
+      className="min-w-0 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 shadow-[var(--shadow-1)]"
     >
-      <div className="flex items-center justify-between gap-3">
-        <div className="grid size-10 place-items-center rounded-lg bg-[var(--success-soft)] text-[var(--success)]">
-          <Icon className="size-4" />
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex min-w-0 items-start gap-3">
+          <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-[var(--warning-soft)] text-[var(--warning)]">
+            <CircleDollarSign className="size-5" />
+          </span>
+          <div>
+            <p className="text-[11px] font-medium uppercase tracking-[0.03em] text-[var(--mute)]">
+              Spend recovery guard
+            </p>
+            <h2 className="mt-1 text-[17px] font-semibold tracking-[-0.015em] text-[var(--text)]">
+              {lead.providerName} is leaking the most recoverable spend
+            </h2>
+          </div>
         </div>
-        <span className="text-2xl font-semibold tracking-[-0.02em] text-[var(--text)] [font-variant-numeric:tabular-nums]">{value}</span>
+        <span className="rounded-md bg-[var(--warning-soft)] px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.04em] text-[var(--warning)]">
+          {lead.providerStatus}
+        </span>
       </div>
-      <h3 className="mt-5 text-sm font-semibold text-[var(--text)]">{title}</h3>
-      <p className="mt-2 text-sm leading-6 text-[var(--text-dim)]">{text}</p>
+
+      <div className="mt-5 grid gap-3 sm:grid-cols-3">
+        <Metric label={`recoverable spend · ${range}`} value={formatCurrency(lead.recoverableSpend)} />
+        <Metric label="cost / successful job" value={formatCurrency(lead.costPerSuccessfulGeneration)} />
+        <Metric label="failure rate" value={`${lead.failureRate.toFixed(1)}%`} />
+      </div>
+
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface-mute)] p-3">
+        <p className="text-sm leading-6 text-[var(--text-dim)]">
+          {lead.highestCostModel ? `${lead.highestCostModel} is the highest-cost model on this provider. ` : ""}
+          Recoverable spend is the current window&apos;s spend exposed to failed generations.
+        </p>
+        {lead.incidentId ? (
+          <Link
+            href={`/incidents/${lead.incidentId}`}
+            className="inline-flex shrink-0 items-center gap-1 text-sm font-semibold text-[var(--accent)] hover:underline"
+          >
+            Open incident
+            <ArrowUpRight className="size-4" />
+          </Link>
+        ) : null}
+      </div>
     </motion.section>
   );
 }
