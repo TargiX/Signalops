@@ -12,6 +12,7 @@ import {
   SlidersHorizontal,
   Target,
 } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import type { LucideIcon } from "lucide-react";
@@ -581,7 +582,7 @@ function ReplayPlayer({
         </motion.div>
       </AnimatePresence>
 
-      <div className="mt-3 flex items-center justify-between gap-2">
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
         <button
           onClick={() => onStep(stepIndex - 1)}
           disabled={stepIndex === 0}
@@ -591,13 +592,22 @@ function ReplayPlayer({
           Back
         </button>
         {isLast ? (
-          <button
-            onClick={() => onExit()}
-            className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-lg border border-[var(--accent)] bg-[var(--accent)] px-4 text-[12.5px] font-semibold text-white shadow-[var(--shadow-1)] transition-colors hover:bg-[var(--accent-hover)]"
-          >
-            <CheckCircle2 className="size-4" />
-            Finish replay
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Link
+              href={`/incidents/${encodeURIComponent(step.state.selectedIncidentId)}#handoff`}
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-[12.5px] font-medium text-[var(--text)] transition-colors hover:bg-[var(--surface-mute)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--surface)]"
+            >
+              Open incident handoff
+              <Link2 className="size-4" />
+            </Link>
+            <button
+              onClick={() => onExit()}
+              className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-lg border border-[var(--accent)] bg-[var(--accent)] px-4 text-[12.5px] font-semibold text-white shadow-[var(--shadow-1)] transition-colors hover:bg-[var(--accent-hover)]"
+            >
+              <CheckCircle2 className="size-4" />
+              Finish replay
+            </button>
+          </div>
         ) : (
           <button
             onClick={() => onStep(stepIndex + 1)}
