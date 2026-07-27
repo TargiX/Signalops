@@ -181,6 +181,20 @@ function readReplayParams(): { scenarioId: string | null; step: number } {
   return parseReplayUrlState(window.location.search, replayStepCounts);
 }
 
+/** Read a bounded incident-to-cockpit handoff link without changing routing state. */
+function readCockpitFocusParams() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  const incidentId = params.get("incident");
+
+  return params.get("view") === "triage" && incidentId?.trim()
+    ? incidentId
+    : null;
+}
+
 type ReplayUrlWriteMode = "push" | "replace" | "none";
 
 function writeReplayUrlState(
@@ -249,7 +263,9 @@ export function Dashboard() {
   const [replayStepIndex, setReplayStepIndex] = useState(() =>
     readReplayParams().step,
   );
+  const [cockpitFocusIncidentId] = useState(() => readCockpitFocusParams());
   const queueRef = useRef<HTMLDivElement | null>(null);
+  const cockpitFocusHandled = useRef(false);
 
   const { data, isLoading, isFetching, refetch } = useQuery({
     queryKey: ["ops-snapshot", range],
@@ -258,6 +274,39 @@ export function Dashboard() {
 
   const activeRoutingRule = data?.activeRoutingRule ?? null;
   const routingApplied = Boolean(activeRoutingRule);
+
+  useEffect(() => {
+    if (
+      cockpitFocusHandled.current ||
+      !data ||
+      replayScenarioId ||
+      !cockpitFocusIncidentId
+    ) {
+      return;
+    }
+
+    const incident = data.incidents.find(
+      (item) => item.id === cockpitFocusIncidentId,
+    );
+    if (!incident) {
+      cockpitFocusHandled.current = true;
+      return;
+    }
+
+    cockpitFocusHandled.current = true;
+    const frame = requestAnimationFrame(() => {
+      setSelectedIncidentId(incident.id);
+      setSavedView("triage");
+      setProviderView("risk");
+      setModelView("ranked");
+      setQueueFocusProviderId(incident.providerId);
+      setQueueFocusStatus("all");
+      queueRef.current?.scrollIntoView({ block: "start" });
+      queueRef.current?.focus({ preventScroll: true });
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [cockpitFocusIncidentId, data, replayScenarioId]);
 
   const effectiveProviders = useMemo(() => {
     if (!data || !activeRoutingRule) {
