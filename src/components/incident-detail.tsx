@@ -43,6 +43,10 @@ const activeStatuses: GenerationStatus[] = [
 type Guard = "latency" | "failure";
 type DecisionState = "proposed" | "simulated" | "applied";
 
+function buildFocusedCockpitUrl(incidentId: string) {
+  return `/cockpit?incident=${encodeURIComponent(incidentId)}&view=triage`;
+}
+
 export function IncidentDetail({ incidentId }: { incidentId: string }) {
   const [guard, setGuard] = useState<Guard>("latency");
   const [trafficShare, setTrafficShare] = useState(68);
@@ -219,6 +223,13 @@ export function IncidentDetail({ incidentId }: { incidentId: string }) {
               >
                 <ArrowLeft className="size-4" />
                 Back to cockpit
+              </Link>
+              <Link
+                href={buildFocusedCockpitUrl(incident.id)}
+                className="mt-3 inline-flex items-center gap-2 text-sm font-semibold text-[var(--accent)] hover:underline"
+              >
+                Continue focused triage
+                <Target className="size-4" />
               </Link>
               <div className="mt-4 flex flex-wrap items-center gap-2">
                 <span
