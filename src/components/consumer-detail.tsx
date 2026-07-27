@@ -14,7 +14,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import Link from "next/link";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { fetchOpsSnapshot } from "@/lib/mock-data";
 import { cn, formatCurrency, formatNumber } from "@/lib/utils";
@@ -23,8 +23,46 @@ type GuardState = "draft" | "simulated" | "active";
 
 type CopyState = { content: string; status: "copied" | "error"; error?: string } | null;
 
+const previewGuardParam = "preview";
+
 function normalizeCeiling(value: number) {
   return Number.isFinite(value) ? Math.max(0, value) : 0;
+}
+
+function readPreviewCeilingFromLocation() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  const rawCeiling = params.get("ceiling");
+  if (params.get("guard") !== previewGuardParam || rawCeiling === null || rawCeiling.trim() === "") {
+    return null;
+  }
+
+  const ceiling = Number(rawCeiling);
+  return Number.isFinite(ceiling) && ceiling >= 0 ? ceiling : null;
+}
+
+function buildPreviewGuardUrl(ceiling: number) {
+  const url = new URL(window.location.href);
+  url.searchParams.set("ceiling", String(normalizeCeiling(ceiling)));
+  url.searchParams.set("guard", previewGuardParam);
+  url.hash = "";
+  return url.toString();
+}
+
+function syncPreviewGuardUrl(ceiling: number) {
+  const url = buildPreviewGuardUrl(ceiling);
+  window.history.replaceState(null, "", url);
+  return url;
+}
+
+function clearPreviewGuardUrl() {
+  const url = new URL(window.location.href);
+  url.searchParams.delete("ceiling");
+  url.searchParams.delete("guard");
+  window.history.replaceState(null, "", url);
 }
 
 function projectConsumerGuard(
@@ -73,7 +111,9 @@ export function ConsumerDetail({ consumerId }: { consumerId: string }) {
   const [simulatedCeiling, setSimulatedCeiling] = useState<number | null>(null);
   const [activeCeiling, setActiveCeiling] = useState<number | null>(null);
   const [copyState, setCopyState] = useState<CopyState>(null);
+  const [previewUrlError, setPreviewUrlError] = useState<string | null>(null);
   const copyAttempt = useRef(0);
+  const previewHydrated = useRef(false);
   const ceiling = normalizeCeiling(ceilingOverride ?? (consumer ? Math.max(1, Math.floor(consumer.spend * 0.8)) : 0));
 
   const projection = useMemo(() => {
@@ -85,6 +125,25 @@ export function ConsumerDetail({ consumerId }: { consumerId: string }) {
   }, [ceiling, consumer]);
 
   const guardState: GuardState = activeCeiling !== null ? "active" : simulatedCeiling === ceiling ? "simulated" : "draft";
+
+  useEffect(() => {
+    if (previewHydrated.current) {
+      return;
+    }
+
+    previewHydrated.current = true;
+    const previewCeiling = readPreviewCeilingFromLocation();
+    if (previewCeiling === null) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      setCeilingOverride(previewCeiling);
+      setSimulatedCeiling(previewCeiling);
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
 
   if (isLoading || !data) {
     return (
@@ -137,6 +196,43 @@ export function ConsumerDetail({ consumerId }: { consumerId: string }) {
           error: copyError instanceof Error ? copyError.message : "Copy failed. Try again.",
         });
       }
+    }
+  }
+
+  async function copyPreviewLink() {
+    const link = buildPreviewGuardUrl(ceiling);
+    const attempt = ++copyAttempt.current;
+    try {
+      await navigator.clipboard.writeText(link);
+      if (copyAttempt.current === attempt) {
+        setCopyState({ content: link, status: "copied" });
+      }
+    } catch (copyError) {
+      if (copyAttempt.current === attempt) {
+        setCopyState({
+          content: link,
+          status: "error",
+          error: copyError instanceof Error ? copyError.message : "Copy failed. Try again.",
+        });
+      }
+    }
+  }
+
+  function syncPreviewLink() {
+    try {
+      syncPreviewGuardUrl(ceiling);
+      setPreviewUrlError(null);
+    } catch {
+      setPreviewUrlError("Preview is ready, but the shareable link could not be updated. Retry link sync to keep the address bar accurate.");
+    }
+  }
+
+  function clearPreviewLink() {
+    try {
+      clearPreviewGuardUrl();
+      setPreviewUrlError(null);
+    } catch {
+      setPreviewUrlError("This draft is no longer the shared preview, but the address bar could not be cleared.");
     }
   }
 
@@ -196,6 +292,7 @@ export function ConsumerDetail({ consumerId }: { consumerId: string }) {
                     setCeilingOverride(normalizeCeiling(nextCeiling));
                     setSimulatedCeiling(null);
                     setActiveCeiling(null);
+                    clearPreviewLink();
                   }}
                   step="1"
                   type="number"
@@ -210,6 +307,7 @@ export function ConsumerDetail({ consumerId }: { consumerId: string }) {
                   copyAttempt.current += 1;
                   setCopyState(null);
                   setSimulatedCeiling(ceiling);
+                  syncPreviewLink();
                 }}
                 className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface-mute)] px-4 text-sm font-semibold text-[var(--text)] transition hover:border-[var(--accent)] hover:text-[var(--accent)]"
               >
@@ -219,7 +317,10 @@ export function ConsumerDetail({ consumerId }: { consumerId: string }) {
               <button
                 type="button"
                 disabled={guardState !== "simulated"}
-                onClick={() => setActiveCeiling(ceiling)}
+                onClick={() => {
+                  setActiveCeiling(ceiling);
+                  clearPreviewLink();
+                }}
                 className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[var(--accent)] px-4 text-sm font-semibold text-white transition hover:bg-[var(--accent-hover)] disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <ShieldCheck className="size-4" />
@@ -260,6 +361,58 @@ export function ConsumerDetail({ consumerId }: { consumerId: string }) {
               <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-[var(--success)]" />
               {inputChanged ? "Draft values are not active. Preview, then explicitly activate the session-only guard." : "This guard is local to the current screen and is intentionally not a persisted billing control."}
             </p>
+            {guardState === "simulated" ? (
+              <section
+                aria-labelledby="preview-checkpoint-title"
+                className="mt-5 rounded-lg border border-[var(--info)]/20 bg-[var(--info-soft)] p-4"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--info)]">Shareable checkpoint</p>
+                    <h3 className="mt-1 text-base font-semibold text-[var(--text-strong)]" id="preview-checkpoint-title">
+                      Preview this guard with a teammate
+                    </h3>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={copyPreviewLink}
+                    className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-[var(--info)]/25 bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--text)] transition hover:border-[var(--info)] hover:text-[var(--info)]"
+                  >
+                    {copyState?.content === buildPreviewGuardUrl(ceiling) && copyState.status === "copied" ? (
+                      <ClipboardCheck className="size-4" />
+                    ) : (
+                      <Clipboard className="size-4" />
+                    )}
+                    {copyState?.content === buildPreviewGuardUrl(ceiling) && copyState.status === "copied"
+                      ? "Preview link copied"
+                      : "Copy preview link"}
+                  </button>
+                </div>
+                <p className="mt-3 text-sm leading-6 text-[var(--text-dim)]">
+                  This link restores the selected account and simulated ceiling only. It never activates a guard or changes billing, credits, or server-side policy.
+                </p>
+                {copyState?.content === buildPreviewGuardUrl(ceiling) && copyState.status === "error" ? (
+                  <p className="mt-3 text-sm font-medium text-[var(--danger)]" role="alert">
+                    {copyState.error}
+                  </p>
+                ) : null}
+              </section>
+            ) : null}
+            {previewUrlError ? (
+              <div
+                className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--warning)]/20 bg-[var(--warning-soft)] p-3"
+                role="alert"
+              >
+                <p className="text-sm leading-5 text-[var(--text)]">{previewUrlError}</p>
+                <button
+                  type="button"
+                  onClick={syncPreviewLink}
+                  className="shrink-0 text-sm font-semibold text-[var(--accent)] underline-offset-4 hover:underline"
+                >
+                  Retry link sync
+                </button>
+              </div>
+            ) : null}
             {activeHandoff ? (
               <section
                 aria-labelledby="session-guard-handoff-title"

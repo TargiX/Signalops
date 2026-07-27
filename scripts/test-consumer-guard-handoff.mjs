@@ -33,6 +33,18 @@ const normalizeCeilingSource = extractFunction(consumerDetailSource, "normalizeC
   "function normalizeCeiling(value: number)",
   "function normalizeCeiling(value)",
 );
+const previewGuardParamSource = consumerDetailSource.match(/const previewGuardParam = "preview";/)?.[0];
+assert.ok(previewGuardParamSource, "Expected a stable query marker for shareable guard previews.");
+const readPreviewCeilingSource = extractFunction(consumerDetailSource, "readPreviewCeilingFromLocation");
+const buildPreviewGuardUrlSource = extractFunction(consumerDetailSource, "buildPreviewGuardUrl").replace(
+  "function buildPreviewGuardUrl(ceiling: number)",
+  "function buildPreviewGuardUrl(ceiling)",
+);
+const syncPreviewGuardUrlSource = extractFunction(consumerDetailSource, "syncPreviewGuardUrl").replace(
+  "function syncPreviewGuardUrl(ceiling: number)",
+  "function syncPreviewGuardUrl(ceiling)",
+);
+const clearPreviewGuardUrlSource = extractFunction(consumerDetailSource, "clearPreviewGuardUrl");
 const projectConsumerGuardSource = extractFunction(consumerDetailSource, "projectConsumerGuard").replace(
   "function projectConsumerGuard(\n  consumer: { spend: number; generations: number; credits: number },\n  ceiling: number,\n)",
   "function projectConsumerGuard(consumer, ceiling)",
@@ -49,6 +61,10 @@ const guard = new Function(
   (value) => `$${value.toFixed(2)}`,
   (value) => String(value),
 );
+
+const previewGuard = new Function(
+  `${previewGuardParamSource}\n${normalizeCeilingSource}\n${readPreviewCeilingSource}\n${buildPreviewGuardUrlSource}\n${syncPreviewGuardUrlSource}\n${clearPreviewGuardUrlSource}\nreturn { readPreviewCeilingFromLocation, buildPreviewGuardUrl, syncPreviewGuardUrl, clearPreviewGuardUrl };`,
+)();
 
 const activationConsumer = { id: "acme", name: "Acme", plan: "Pro", spend: 100, generations: 20, credits: 50 };
 const activeCeiling = guard.normalizeCeiling(80);
@@ -75,6 +91,36 @@ assert.match(copiedHandoff, /account spend reaches \$80\.00/);
 assert.match(copiedHandoffAfterRefetch, /account spend reaches \$80\.00/);
 assert.match(copiedHandoffAfterRefetch, /over ceiling: \$40\.00/);
 assert.match(copiedHandoffAfterRefetch, /8 generation requests held · 32 credits remain/);
+
+const previousWindow = globalThis.window;
+const historyWrites = [];
+globalThis.window = {
+  location: {
+    href: "https://signalops.ilyamoskovkin.com/consumers/usr_01?keep=value&ceiling=80&guard=preview#handoff",
+    search: "?keep=value&ceiling=80&guard=preview",
+  },
+  history: {
+    replaceState: (_state, _title, url) => {
+      const nextUrl = new URL(String(url));
+      historyWrites.push(nextUrl.toString());
+      globalThis.window.location.href = nextUrl.toString();
+      globalThis.window.location.search = nextUrl.search;
+    },
+  },
+};
+
+assert.equal(previewGuard.readPreviewCeilingFromLocation(), 80);
+assert.equal(
+  previewGuard.buildPreviewGuardUrl(72.5),
+  "https://signalops.ilyamoskovkin.com/consumers/usr_01?keep=value&ceiling=72.5&guard=preview",
+);
+assert.equal(previewGuard.syncPreviewGuardUrl(72.5), historyWrites[0]);
+assert.equal(globalThis.window.location.search, "?keep=value&ceiling=72.5&guard=preview");
+previewGuard.clearPreviewGuardUrl();
+assert.equal(globalThis.window.location.search, "?keep=value");
+globalThis.window.location.search = "?ceiling=-1&guard=preview";
+assert.equal(previewGuard.readPreviewCeilingFromLocation(), null);
+globalThis.window = previousWindow;
 
 assert.match(
   consumerDetailSource,
@@ -108,12 +154,37 @@ assert.match(
 );
 assert.match(
   consumerDetailSource,
+  /useEffect\(\(\) => \{[\s\S]*?readPreviewCeilingFromLocation\(\)[\s\S]*?setCeilingOverride\(previewCeiling\);[\s\S]*?setSimulatedCeiling\(previewCeiling\);/,
+  "Expected an exact preview checkpoint URL to restore only a simulated, never active, guard.",
+);
+assert.match(
+  consumerDetailSource,
+  /setSimulatedCeiling\(ceiling\);[\s\S]*?syncPreviewLink\(\);/,
+  "Expected an operator preview to keep the address bar synchronized with its exact ceiling.",
+);
+assert.match(
+  consumerDetailSource,
+  /setActiveCeiling\(ceiling\);[\s\S]*?clearPreviewLink\(\);/,
+  "Expected activating a session-only guard to remove its read-only preview checkpoint URL.",
+);
+assert.match(
+  consumerDetailSource,
+  /Shareable checkpoint[\s\S]*?Copy preview link[\s\S]*?never activates a guard or changes billing, credits, or server-side policy/,
+  "Expected a keyboard-operable sharing surface with its non-mutating boundary visible.",
+);
+assert.match(
+  consumerDetailSource,
+  /previewUrlError[\s\S]*?role="alert"[\s\S]*?Retry link sync/,
+  "Expected address-bar synchronization failures to stay visible and retryable.",
+);
+assert.match(
+  consumerDetailSource,
   /const activeHandoff =[\s\S]*?activeCeiling === null[\s\S]*?formatSessionGuardHandoff/,
   "Expected no handoff to exist before a session guard is active.",
 );
 assert.match(
   consumerDetailSource,
-  /disabled=\{guardState !== "simulated"\}[\s\S]*?onClick=\{\(\) => setActiveCeiling\(ceiling\)\}/,
+  /disabled=\{guardState !== "simulated"\}[\s\S]*?onClick=\{\(\) => \{[\s\S]*?setActiveCeiling\(ceiling\);/,
   "Expected activation to capture the current normalized ceiling before the live query can change it.",
 );
 assert.match(
