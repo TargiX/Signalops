@@ -17,6 +17,10 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { fetchOpsSnapshot } from "@/lib/mock-data";
+import {
+  captureProductEvent,
+  captureProductException,
+} from "@/lib/product-analytics";
 import { cn, formatCurrency, formatNumber } from "@/lib/utils";
 
 type GuardState = "draft" | "simulated" | "active";
@@ -185,10 +189,15 @@ export function ConsumerDetail({ consumerId }: { consumerId: string }) {
     const attempt = ++copyAttempt.current;
     try {
       await navigator.clipboard.writeText(activeHandoff);
+      captureProductEvent("session_guard_handoff_copied", {
+        consumer_id: consumerId,
+        ceiling: activeCeiling,
+      });
       if (copyAttempt.current === attempt) {
         setCopyState({ content: activeHandoff, status: "copied" });
       }
     } catch (copyError) {
+      captureProductException(copyError, { flow: "copy_session_guard_handoff" });
       if (copyAttempt.current === attempt) {
         setCopyState({
           content: activeHandoff,
@@ -204,10 +213,15 @@ export function ConsumerDetail({ consumerId }: { consumerId: string }) {
     const attempt = ++copyAttempt.current;
     try {
       await navigator.clipboard.writeText(link);
+      captureProductEvent("session_guard_preview_link_copied", {
+        consumer_id: consumerId,
+        ceiling,
+      });
       if (copyAttempt.current === attempt) {
         setCopyState({ content: link, status: "copied" });
       }
     } catch (copyError) {
+      captureProductException(copyError, { flow: "copy_session_guard_preview" });
       if (copyAttempt.current === attempt) {
         setCopyState({
           content: link,
@@ -222,6 +236,10 @@ export function ConsumerDetail({ consumerId }: { consumerId: string }) {
     try {
       syncPreviewGuardUrl(ceiling);
       setPreviewUrlError(null);
+      captureProductEvent("session_guard_preview_link_synced", {
+        consumer_id: consumerId,
+        ceiling,
+      });
     } catch {
       setPreviewUrlError("Preview is ready, but the shareable link could not be updated. Retry link sync to keep the address bar accurate.");
     }
@@ -308,6 +326,11 @@ export function ConsumerDetail({ consumerId }: { consumerId: string }) {
                   setCopyState(null);
                   setSimulatedCeiling(ceiling);
                   syncPreviewLink();
+                  captureProductEvent("session_guard_simulated", {
+                    consumer_id: consumer.id,
+                    ceiling,
+                    affected_generations: projection.affectedGenerations,
+                  });
                 }}
                 className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface-mute)] px-4 text-sm font-semibold text-[var(--text)] transition hover:border-[var(--accent)] hover:text-[var(--accent)]"
               >
@@ -320,6 +343,11 @@ export function ConsumerDetail({ consumerId }: { consumerId: string }) {
                 onClick={() => {
                   setActiveCeiling(ceiling);
                   clearPreviewLink();
+                  captureProductEvent("session_guard_activated", {
+                    consumer_id: consumer.id,
+                    ceiling,
+                    affected_generations: projection.affectedGenerations,
+                  });
                 }}
                 className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[var(--accent)] px-4 text-sm font-semibold text-white transition hover:bg-[var(--accent-hover)] disabled:cursor-not-allowed disabled:opacity-50"
               >

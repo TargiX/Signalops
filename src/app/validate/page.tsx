@@ -3,6 +3,11 @@
 import { CheckCircle2, Clipboard, ClipboardCheck, Loader2, ShieldAlert, Sparkles, XCircle } from "lucide-react";
 import { useMemo, useState } from "react";
 
+import {
+  captureProductEvent,
+  captureProductException,
+  getPostHogRequestHeaders,
+} from "@/lib/product-analytics";
 import type { SignalEventValidationResponse } from "@/lib/signalops/events";
 
 // The endpoint returns unknown JSON, so treat every field as optional; the shape
@@ -220,6 +225,9 @@ export default function ValidatePage() {
 
     if (!parsedPayload.ok) {
       setError(parsedPayload.error);
+      captureProductEvent("signal_validation_blocked", {
+        reason: "invalid_json",
+      });
       return;
     }
 
@@ -231,16 +239,28 @@ export default function ValidatePage() {
         method: "POST",
         headers: {
           "content-type": "application/json",
+          ...getPostHogRequestHeaders(),
         },
         body: formatJson(parsedPayload.value),
         signal: controller.signal,
       });
       const json = (await response.json()) as ValidationResponse;
       setResult(json);
+      captureProductEvent("signal_validation_received", {
+        success: Boolean(json.ok),
+        status_code: response.status,
+        outcome_code: json.code ?? (response.ok ? "accepted" : "rejected"),
+        valid_events: json.validEvents ?? 0,
+        rejected_events: json.rejectedEvents ?? 0,
+        readiness: json.diagnostics?.readiness,
+      });
       if (!response.ok) {
         setError(json.error ?? json.code ?? `Validation failed with ${response.status}`);
       }
     } catch (requestError) {
+      captureProductException(requestError, {
+        flow: "signal_validation",
+      });
       setError(
         requestError instanceof Error && requestError.name === "AbortError"
           ? "Validation timed out after 15 seconds."
@@ -258,7 +278,9 @@ export default function ValidatePage() {
     try {
       await navigator.clipboard.writeText(payload);
       setCopied(true);
+      captureProductEvent("signal_payload_copied");
     } catch (clipboardError) {
+      captureProductException(clipboardError, { flow: "copy_signal_payload" });
       setError(clipboardError instanceof Error ? clipboardError.message : "Copy failed");
     }
   }
@@ -273,7 +295,14 @@ export default function ValidatePage() {
     try {
       await navigator.clipboard.writeText(formatValidationHandoff(result));
       setCopiedHandoff(true);
+      captureProductEvent("validation_handoff_copied", {
+        success: Boolean(result.ok),
+        readiness: result.diagnostics?.readiness,
+      });
     } catch (clipboardError) {
+      captureProductException(clipboardError, {
+        flow: "copy_validation_handoff",
+      });
       setHandoffError(clipboardError instanceof Error ? clipboardError.message : "Copy failed");
     }
   }
@@ -284,12 +313,18 @@ export default function ValidatePage() {
 
     if (!parsedPayload.ok) {
       setIngestError(`Fix local JSON before ingesting: ${parsedPayload.error}`);
+      captureProductEvent("protected_ingest_blocked", {
+        reason: "invalid_json",
+      });
       return;
     }
 
     const token = ingestToken.trim();
     if (!token) {
       setIngestError("Enter a development bearer token before sending to protected ingest.");
+      captureProductEvent("protected_ingest_blocked", {
+        reason: "missing_token",
+      });
       return;
     }
 
@@ -303,17 +338,29 @@ export default function ValidatePage() {
         headers: {
           authorization: `Bearer ${token}`,
           "content-type": "application/json",
+          ...getPostHogRequestHeaders(),
         },
         body: formatJson(parsedPayload.value),
         signal: controller.signal,
       });
       const json = (await response.json()) as IngestResponse;
       setIngestResult(json);
+      captureProductEvent("protected_ingest_received", {
+        success: Boolean(json.ok),
+        status_code: response.status,
+        outcome_code: json.code ?? (response.ok ? "accepted" : "rejected"),
+        stored_events: json.receipt?.storedEvents ?? 0,
+        duplicate_events: json.receipt?.duplicateEvents ?? 0,
+        durable_storage: json.receipt?.storage?.durable,
+      });
 
       if (!response.ok || !json.ok) {
         setIngestError(json.error ?? json.code ?? `Protected ingest failed with ${response.status}`);
       }
     } catch (requestError) {
+      captureProductException(requestError, {
+        flow: "protected_ingest",
+      });
       setIngestError(
         requestError instanceof Error && requestError.name === "AbortError"
           ? "Protected ingest timed out after 15 seconds."
@@ -339,6 +386,9 @@ export default function ValidatePage() {
     setError(null);
     setResult(null);
     setPayload(formatJson(sample.payload));
+    captureProductEvent("validation_sample_loaded", {
+      sample_id: sample.id,
+    });
   }
 
   const StatusIcon = statusIcon;

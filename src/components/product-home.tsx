@@ -25,6 +25,7 @@ import { useState } from "react";
 
 import { buttonVariants } from "@/components/ui/button";
 import { getOpsSnapshot, type Generation, type Incident, type Provider } from "@/lib/mock-data";
+import { captureProductEvent } from "@/lib/product-analytics";
 import { cn, formatCurrency, formatMs, formatNumber } from "@/lib/utils";
 
 const navItems = ["Product", "Solutions", "Resources", "Pricing", "Docs"];
@@ -133,6 +134,12 @@ export function ProductHome() {
             <motion.div variants={itemVariants} className="mt-8 flex flex-wrap items-center gap-4">
               <Link
                 href="/cockpit"
+                onClick={() =>
+                  captureProductEvent("home_cta_clicked", {
+                    action: "enter_cockpit",
+                    placement: "hero",
+                  })
+                }
                 className={cn(
                   buttonVariants({ size: "lg" }),
                   "h-11 rounded-lg bg-[var(--accent)] px-5 text-[13px] font-semibold text-white shadow-[0_16px_30px_rgba(42,80,214,0.22)] hover:bg-[var(--accent-hover)]",
@@ -143,6 +150,12 @@ export function ProductHome() {
               </Link>
               <Link
                 href="/cockpit?replay=alibaba-p95&step=0"
+                onClick={() =>
+                  captureProductEvent("home_cta_clicked", {
+                    action: "watch_replay",
+                    placement: "hero",
+                  })
+                }
                 className={cn(
                   buttonVariants({ variant: "outline", size: "lg" }),
                   "h-11 rounded-lg border-[var(--border)] bg-white/90 px-5 text-[13px] font-semibold text-[var(--text)] shadow-sm hover:bg-white",
@@ -157,6 +170,12 @@ export function ProductHome() {
             <motion.div variants={itemVariants} className="mt-4">
               <Link
                 href="/validate"
+                onClick={() =>
+                  captureProductEvent("home_cta_clicked", {
+                    action: "validate_payload",
+                    placement: "hero",
+                  })
+                }
                 className="inline-flex items-center gap-2 text-[13px] font-semibold text-[var(--text-dim)] transition-colors hover:text-[var(--accent)]"
               >
                 Validate an event payload

@@ -17,6 +17,10 @@ import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import type { LucideIcon } from "lucide-react";
 import type { GenerationStatus, ProviderId } from "@/lib/mock-data";
+import {
+  captureProductEvent,
+  captureProductException,
+} from "@/lib/product-analytics";
 import { cn, formatCurrency, formatMs, formatNumber } from "@/lib/utils";
 
 export type SavedView = "ops" | "triage" | "cost";
@@ -375,7 +379,12 @@ function ScenarioLauncher({
       {scenarios.map((scenario) => (
         <button
           key={scenario.id}
-          onClick={() => onStart(scenario.id)}
+          onClick={() => {
+            captureProductEvent("incident_replay_started", {
+              scenario_id: scenario.id,
+            });
+            onStart(scenario.id);
+          }}
           className="group flex cursor-pointer flex-col items-start gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface-mute)] p-3 text-left transition-all hover:border-[var(--accent)] hover:bg-[var(--surface)] hover:shadow-[var(--shadow-1)]"
         >
           <div className="flex w-full items-center justify-between gap-2">
@@ -420,12 +429,13 @@ function CopyLinkButton() {
       // the current URL is already the exact shareable beat to hand off.
       await navigator.clipboard.writeText(window.location.href);
       setCopied(true);
+      captureProductEvent("incident_replay_link_copied");
       if (resetTimer.current) {
         clearTimeout(resetTimer.current);
       }
       resetTimer.current = setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // Clipboard unavailable (permissions/unsupported); ignore silently.
+    } catch (error) {
+      captureProductException(error, { flow: "copy_incident_replay_link" });
     }
   };
 
@@ -493,7 +503,14 @@ function ReplayPlayer({
           return (
             <li key={item.id}>
               <button
-                onClick={() => onStep(index)}
+                onClick={() => {
+                  captureProductEvent("incident_replay_step_selected", {
+                    scenario_id: scenario.id,
+                    step_id: item.id,
+                    step_index: index,
+                  });
+                  onStep(index);
+                }}
                 aria-current={isActive ? "step" : undefined}
                 className={cn(
                   "flex w-full cursor-pointer flex-col items-center gap-1.5 rounded-lg border px-1 py-2 text-center transition-colors",
@@ -601,7 +618,12 @@ function ReplayPlayer({
               <Link2 className="size-4" />
             </Link>
             <button
-              onClick={() => onExit()}
+              onClick={() => {
+                captureProductEvent("incident_replay_completed", {
+                  scenario_id: scenario.id,
+                });
+                onExit();
+              }}
               className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-lg border border-[var(--accent)] bg-[var(--accent)] px-4 text-[12.5px] font-semibold text-white shadow-[var(--shadow-1)] transition-colors hover:bg-[var(--accent-hover)]"
             >
               <CheckCircle2 className="size-4" />
