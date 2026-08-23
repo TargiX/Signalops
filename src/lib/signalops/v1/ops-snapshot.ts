@@ -76,6 +76,9 @@ export type SignalOpsOperationSnapshotV1 = {
   service: string;
   release?: string;
   occurredAt: string;
+  failureCategory?: SignalOpsFailureCategoryV1;
+  failureCode?: string;
+  failureRetryable?: boolean;
 };
 
 export type SignalOpsTimelineBucketV1 = {
@@ -144,6 +147,7 @@ export type SignalOpsOpsSnapshotV1 = {
     successRate: number | null;
     p95DurationMs: number | null;
     retryableFailures: number;
+    operationsWithAttemptTelemetry: number;
     costByCurrency: SignalOpsCurrencyCostV1[];
   };
   environments: string[];
@@ -151,6 +155,7 @@ export type SignalOpsOpsSnapshotV1 = {
   providers: SignalOpsProviderSnapshotV1[];
   models: SignalOpsModelSnapshotV1[];
   recentOperations: SignalOpsOperationSnapshotV1[];
+  recentFailedOperations: SignalOpsOperationSnapshotV1[];
 };
 
 type OperationState = {
@@ -552,6 +557,7 @@ export function buildSignalOpsOpsSnapshotV1(input: {
 
   let succeededOperations = 0;
   let failedOperations = 0;
+  let operationsWithAttemptTelemetry = 0;
   const operationDurations: number[] = [];
   const recentOperations = [...operations.entries()]
     .flatMap(([operationId, state]): SignalOpsOperationSnapshotV1[] => {
@@ -567,6 +573,7 @@ export function buildSignalOpsOpsSnapshotV1(input: {
         state.accepted?.time ?? state.source?.time ?? event.time,
       );
       if (!operationBucket) return [];
+      if (state.attempts.size > 0) operationsWithAttemptTelemetry += 1;
       if (terminal?.data.outcome.status === "succeeded") succeededOperations += 1;
       else if (terminal) failedOperations += 1;
       if (durationMs !== null) operationDurations.push(durationMs);
@@ -591,6 +598,11 @@ export function buildSignalOpsOpsSnapshotV1(input: {
       if (durationMs !== null) model.durations.push(durationMs);
       modelAccumulators.set(modelKey, model);
 
+      const failure =
+        terminal && terminal.data.outcome.status !== "succeeded"
+          ? terminal.data.outcome.failure
+          : undefined;
+
       return [{
         operationId,
         kind: event.data.operation.kind,
@@ -602,6 +614,9 @@ export function buildSignalOpsOpsSnapshotV1(input: {
         service: event.data.resource.service,
         release: event.data.resource.release,
         occurredAt: terminal?.time ?? state.accepted?.time ?? event.time,
+        failureCategory: failure?.category,
+        failureCode: failure?.code,
+        failureRetryable: failure?.retryable,
       }];
     })
     .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt));
@@ -675,6 +690,7 @@ export function buildSignalOpsOpsSnapshotV1(input: {
         terminalOperations === 0 ? null : succeededOperations / terminalOperations,
       p95DurationMs: percentile95(operationDurations),
       retryableFailures,
+      operationsWithAttemptTelemetry,
       costByCurrency: costRows(totalCosts),
     },
     environments: [...environments].sort(),
@@ -682,5 +698,8 @@ export function buildSignalOpsOpsSnapshotV1(input: {
     providers,
     models,
     recentOperations: recentOperations.slice(0, 50),
+    recentFailedOperations: recentOperations
+      .filter((operation) => operation.status !== "succeeded" && operation.status !== "running")
+      .slice(0, 50),
   };
 }

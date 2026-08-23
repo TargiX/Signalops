@@ -42,6 +42,8 @@ function isMatchingSnapshot(
     row.snapshot?.range === range &&
     Array.isArray(row.snapshot?.timeline) &&
     Array.isArray(row.snapshot?.models) &&
+    Array.isArray(row.snapshot?.recentFailedOperations) &&
+    Number.isFinite(row.snapshot?.totals?.operationsWithAttemptTelemetry) &&
     Date.parse(row.projected_at) >= now.getTime() - 60_000
   );
 }
