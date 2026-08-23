@@ -10,8 +10,9 @@ const fixture = (name) => import(`../schemas/ai-telemetry/v1/fixtures/valid/${na
   with: { type: "json" },
 }).then((module) => structuredClone(module.default));
 
-const [accepted, attemptTerminal, operationTerminal] = await Promise.all([
+const [accepted, attemptStarted, attemptTerminal, operationTerminal] = await Promise.all([
   fixture("operation-accepted"),
+  fixture("attempt-started"),
   fixture("attempt-terminal"),
   fixture("operation-terminal"),
 ]);
@@ -114,5 +115,68 @@ for (const [range, expectedBuckets] of [
   assert.equal(rangedSnapshot.timeline.length, expectedBuckets);
   assert.equal(rangedSnapshot.timeline.at(-1).end, "2026-08-23T12:00:00.000Z");
 }
+
+const rangeBoundary = "2026-08-22T12:00:00.000Z";
+const boundaryAccepted = structuredClone(accepted);
+const boundaryAttemptStarted = structuredClone(attemptStarted);
+const boundaryAttemptTerminal = structuredClone(attemptTerminal);
+const boundaryOperationTerminal = structuredClone(operationTerminal);
+boundaryAttemptStarted.data.attempt = structuredClone(boundaryAttemptTerminal.data.attempt);
+boundaryAccepted.time = "2026-08-22T11:59:58.000Z";
+boundaryAttemptStarted.time = "2026-08-22T11:59:59.000Z";
+boundaryAttemptTerminal.time = "2026-08-22T12:00:01.000Z";
+boundaryOperationTerminal.time = "2026-08-22T12:00:02.000Z";
+const boundaryRecords = [
+  boundaryAccepted,
+  boundaryAttemptStarted,
+  boundaryAttemptTerminal,
+  boundaryOperationTerminal,
+].map((event, index) => ({
+  tenantId,
+  event,
+  payloadDigest: `boundary-${index}`,
+  receivedAt: `2026-08-22T12:01:0${index}.000Z`,
+}));
+const boundarySnapshot = buildSignalOpsOpsSnapshotV1({
+  tenantId,
+  range: "24h",
+  records: boundaryRecords,
+  now: new Date("2026-08-23T12:00:00.000Z"),
+});
+assert.equal(boundarySnapshot.timeline[0].start, rangeBoundary);
+assert.equal(boundarySnapshot.totals.events, 2);
+assert.equal(boundarySnapshot.totals.operations, 0);
+assert.equal(boundarySnapshot.totals.attempts, 0);
+assert.equal(boundarySnapshot.totals.succeeded, 0);
+assert.deepEqual(boundarySnapshot.totals.costByCurrency, []);
+assert.deepEqual(boundarySnapshot.providers, []);
+assert.deepEqual(boundarySnapshot.models, []);
+assert.deepEqual(boundarySnapshot.recentOperations, []);
+assert.ok(
+  boundarySnapshot.timeline.every(
+    (bucket) =>
+      bucket.operations === 0 &&
+      bucket.attempts === 0 &&
+      bucket.failedOperations === 0 &&
+      bucket.failedAttempts === 0 &&
+      bucket.costByCurrency.length === 0,
+  ),
+  "Lifecycle facts that started before the range must not be reassigned to a terminal-time bucket.",
+);
+
+const projectionServiceSource = await readFile(
+  new URL("../src/lib/signalops/v1/projection-service.ts", import.meta.url),
+  "utf8",
+);
+assert.match(
+  projectionServiceSource,
+  /store\.watermark\(input\.tenantId\)/,
+  "Projection cache invalidation must include lifecycle starts received before the selected range.",
+);
+assert.match(
+  projectionServiceSource,
+  /store\.list\(input\.tenantId,\s*\{\s*limit:/,
+  "Projection rebuilds must load lifecycle state before the selected range.",
+);
 
 console.log("signalops ops v1 checks passed");

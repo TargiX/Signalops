@@ -58,6 +58,11 @@ assert.match(
   /function Panel[\s\S]*?className="min-w-0 rounded-xl/,
   "Live chart panels must be allowed to shrink instead of forcing mobile overflow.",
 );
+assert.equal(
+  liveSource.match(/timeZone:\s*"UTC"/g)?.length,
+  3,
+  "Every live timeline label formatter must render the documented UTC buckets in UTC.",
+);
 assert.doesNotMatch(
   liveSource,
   /Phosphene|customer email|Apply routing rule/i,

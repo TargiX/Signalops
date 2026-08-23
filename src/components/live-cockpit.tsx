@@ -134,17 +134,20 @@ function timelineLabel(value: string, range: SignalOpsOpsRangeV1): string {
     return new Intl.DateTimeFormat("en-US", {
       hour: "numeric",
       minute: "2-digit",
+      timeZone: "UTC",
     }).format(date);
   }
   if (range === "7d") {
     return new Intl.DateTimeFormat("en-US", {
       weekday: "short",
       hour: "numeric",
+      timeZone: "UTC",
     }).format(date);
   }
   return new Intl.DateTimeFormat("en-US", {
     month: "short",
     day: "numeric",
+    timeZone: "UTC",
   }).format(date);
 }
 
