@@ -323,8 +323,10 @@ until a separate privacy-reviewed contract exists. Do not infer users from opera
 - SignalOps monitors its own ingest availability, rejection rate, projection lag, conflicts, and
   database health.
 - A broken projector does not destroy accepted events.
-- Raw canonical events default to 30-day retention; hourly/daily aggregates default to 13 months.
-  Retention is configurable and MUST be disclosed to tenants before onboarding.
+- Raw canonical events default to 100-day retention so the 90-day cockpit remains rebuildable.
+  Conflict and audit evidence defaults to 400 days, while rate-limit buckets default to two days.
+  Retention is configurable and MUST be disclosed to tenants before onboarding. Long-lived
+  aggregate retention is a later storage tier and MUST NOT be claimed until it is implemented.
 
 ## 11. Shared contract artifacts
 

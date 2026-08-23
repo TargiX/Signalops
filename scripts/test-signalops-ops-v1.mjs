@@ -18,6 +18,8 @@ const [accepted, attemptTerminal, operationTerminal] = await Promise.all([
 operationTerminal.data.operation = structuredClone(accepted.data.operation);
 operationTerminal.subject = accepted.subject;
 operationTerminal.data.outcome = { status: "succeeded" };
+attemptTerminal.data.operation = structuredClone(accepted.data.operation);
+attemptTerminal.subject = accepted.subject;
 const tenantId = "phosphene-production";
 const principal = {
   tenantId,

@@ -3,6 +3,8 @@
 This directory is the portable contract artifact for SignalOps canonical AI telemetry v1.
 
 - `event.schema.json` is the normative machine-readable schema.
+- `ingest-response.schema.json` is the normative successful `POST /v1/events` response used by
+  producer adapters to classify stored, duplicate, rejected, and conflicting events.
 - `semantic-validation.mjs` enforces portable cross-field invariants that JSON Schema draft
   2020-12 cannot express, including exact `subject` identity.
 - `fixtures/valid` contains one accepted fixture for every v1 event type.
@@ -30,7 +32,7 @@ node scripts/validate-signalops-contract.mjs \
   --invalid-dir=/absolute/path/to/fixtures/invalid
 ```
 
-A client repository should pin the schema, semantic validator, and fixtures to an immutable
+A client repository should pin both schemas, the semantic validator, and fixtures to an immutable
 SignalOps commit. It must not track
 the moving `main` branch in CI. Publishing a package or release archive is deferred until the v1
 contract is approved; until then, use the full commit SHA in the raw GitHub URL or vendor the files

@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 
+import {
+  listSignalOpsIncidentsV1,
+  type SignalOpsIncidentStateV1,
+} from "@/lib/signalops/v1/incidents";
 import { authorizeSignalOpsOperatorSessionV1 } from "@/lib/signalops/v1/operator-session";
-import type { SignalOpsOpsRangeV1 } from "@/lib/signalops/v1/ops-snapshot";
-import { getSignalOpsOpsSnapshotV1 } from "@/lib/signalops/v1/projection-service";
 import {
   enforceSignalOpsRateLimitV1,
   signalOpsRateLimitHeadersV1,
@@ -10,8 +12,6 @@ import {
 } from "@/lib/signalops/v1/rate-limit";
 
 export const runtime = "nodejs";
-
-const ranges = new Set<SignalOpsOpsRangeV1>(["24h", "7d", "30d", "90d"]);
 
 export async function GET(request: Request) {
   const requestId = `req_${crypto.randomUUID()}`;
@@ -22,33 +22,35 @@ export async function GET(request: Request) {
       { status: 401, headers: { "cache-control": "private, no-store", "x-request-id": requestId } },
     );
   }
-  const requestedRange = new URL(request.url).searchParams.get("range") ?? "24h";
-  if (!ranges.has(requestedRange as SignalOpsOpsRangeV1)) {
+  const search = new URL(request.url).searchParams;
+  const requestedState = search.get("state");
+  if (requestedState && requestedState !== "open" && requestedState !== "resolved") {
     return NextResponse.json(
-      { ok: false, requestId, code: "invalid_range" },
+      { ok: false, requestId, code: "invalid_state" },
       { status: 400, headers: { "cache-control": "private, no-store", "x-request-id": requestId } },
     );
   }
-  const range = requestedRange as SignalOpsOpsRangeV1;
+  const state = requestedState as SignalOpsIncidentStateV1 | null;
+  const limit = Math.max(1, Math.min(Number(search.get("limit") ?? 100) || 100, 500));
   try {
-    const decision = await enforceSignalOpsRateLimitV1({
-      scope: "operator-query",
+    const rateLimit = await enforceSignalOpsRateLimitV1({
+      scope: "operator-incidents",
       identifier: `${session.subject}:${session.tenantId}`,
-      limit: 180,
+      limit: 120,
       windowSeconds: 60,
     });
-    const snapshot = await getSignalOpsOpsSnapshotV1({
+    const incidents = await listSignalOpsIncidentsV1({
       tenantId: session.tenantId,
-      tenantName: session.tenantName,
-      range,
+      state: state ?? undefined,
+      limit,
     });
     return NextResponse.json(
-      { ok: true, requestId, snapshot },
+      { ok: true, requestId, incidents, nextCursor: null },
       {
         headers: {
           "cache-control": "private, no-store",
           "x-request-id": requestId,
-          ...signalOpsRateLimitHeadersV1(decision),
+          ...signalOpsRateLimitHeadersV1(rateLimit),
         },
       },
     );
@@ -66,9 +68,9 @@ export async function GET(request: Request) {
         },
       );
     }
-    console.error("[SignalOps] snapshot failed", { requestId, error });
+    console.error("[SignalOps] incidents query failed", { requestId, error });
     return NextResponse.json(
-      { ok: false, requestId, code: "projection_unavailable" },
+      { ok: false, requestId, code: "incidents_unavailable" },
       { status: 503, headers: { "cache-control": "private, no-store", "x-request-id": requestId } },
     );
   }

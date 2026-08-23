@@ -1,11 +1,16 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
+import type { SignalOpsOperatorRoleV1 } from "./operator-directory.ts";
+
 export const signalOpsCockpitSessionCookieV1 = "signalops_operator_session";
 
 export type SignalOpsOperatorSessionV1 = {
   tenantId: string;
   tenantName: string;
   subject: string;
+  role: SignalOpsOperatorRoleV1;
+  authMode: "password" | "supabase";
+  issuedAt: number;
   expiresAt: number;
 };
 
@@ -16,7 +21,15 @@ function safeEqual(left: string, right: string): boolean {
 }
 
 function sessionSecret(): string | null {
-  return process.env.SIGNALOPS_SESSION_SECRET?.trim() || null;
+  const value = process.env.SIGNALOPS_SESSION_SECRET?.trim();
+  if (!value || (process.env.NODE_ENV === "production" && value.length < 32)) return null;
+  return value;
+}
+
+function previousSessionSecret(): string | null {
+  const value = process.env.SIGNALOPS_SESSION_SECRET_PREVIOUS?.trim();
+  if (!value || (process.env.NODE_ENV === "production" && value.length < 32)) return null;
+  return value;
 }
 
 function encode(input: string): string {
@@ -27,8 +40,7 @@ function decode(input: string): string {
   return Buffer.from(input, "base64url").toString("utf8");
 }
 
-function sign(payload: string): string | null {
-  const secret = sessionSecret();
+function sign(payload: string, secret = sessionSecret()): string | null {
   return secret ? createHmac("sha256", secret).update(payload).digest("base64url") : null;
 }
 
@@ -41,7 +53,16 @@ function cookieValue(request: Request, name: string): string | null {
 }
 
 export function isSignalOpsOperatorAuthConfiguredV1(): boolean {
-  return Boolean(process.env.SIGNALOPS_COCKPIT_PASSWORD?.trim() && sessionSecret());
+  const passwordAllowed =
+    process.env.NODE_ENV !== "production" ||
+    process.env.SIGNALOPS_ALLOW_PASSWORD_AUTH === "true";
+  const password = process.env.SIGNALOPS_COCKPIT_PASSWORD?.trim();
+  return Boolean(
+    passwordAllowed &&
+      password &&
+      (process.env.NODE_ENV !== "production" || password.length >= 16) &&
+      sessionSecret(),
+  );
 }
 
 export function verifySignalOpsOperatorPasswordV1(value: unknown): boolean {
@@ -57,17 +78,36 @@ export function configuredSignalOpsTenantV1(): { id: string; name: string } {
   };
 }
 
-export function createSignalOpsOperatorSessionTokenV1(): string {
-  const tenant = configuredSignalOpsTenantV1();
-  const ttlSeconds = Number(process.env.SIGNALOPS_SESSION_TTL_SECONDS ?? 8 * 60 * 60);
+export function createSignalOpsOperatorSessionTokenV1(input?: {
+  tenantId: string;
+  tenantName: string;
+  subject: string;
+  role: SignalOpsOperatorRoleV1;
+  authMode: "password" | "supabase";
+}): string {
+  const configuredTenant = configuredSignalOpsTenantV1();
+  const tenant = input ?? {
+    tenantId: configuredTenant.id,
+    tenantName: configuredTenant.name,
+    subject: process.env.SIGNALOPS_OPERATOR_SUBJECT?.trim() || "workspace-operator",
+    role: "owner" as const,
+    authMode: "password" as const,
+  };
+  const configuredTtl = Number(process.env.SIGNALOPS_SESSION_TTL_SECONDS ?? 60 * 60);
+  const ttlSeconds =
+    Number.isFinite(configuredTtl) && configuredTtl > 0
+      ? Math.max(300, Math.min(configuredTtl, 24 * 60 * 60))
+      : 60 * 60;
+  const issuedAt = Math.floor(Date.now() / 1_000);
   const payload = encode(
     JSON.stringify({
-      tenantId: tenant.id,
-      tenantName: tenant.name,
-      subject: process.env.SIGNALOPS_OPERATOR_SUBJECT?.trim() || "workspace-operator",
-      expiresAt:
-        Math.floor(Date.now() / 1_000) +
-        (Number.isFinite(ttlSeconds) && ttlSeconds > 0 ? ttlSeconds : 8 * 60 * 60),
+      tenantId: tenant.tenantId,
+      tenantName: tenant.tenantName,
+      subject: tenant.subject,
+      role: tenant.role,
+      authMode: tenant.authMode,
+      issuedAt,
+      expiresAt: issuedAt + ttlSeconds,
     } satisfies SignalOpsOperatorSessionV1),
   );
   const signature = sign(payload);
@@ -81,13 +121,27 @@ export function readSignalOpsOperatorSessionV1(
   const token = cookieValue(request, signalOpsCockpitSessionCookieV1);
   const [payload, signature] = token?.split(".") ?? [];
   const expected = payload ? sign(payload) : null;
-  if (!payload || !signature || !expected || !safeEqual(signature, expected)) return null;
+  const previousExpected = payload ? sign(payload, previousSessionSecret()) : null;
+  if (
+    !payload ||
+    !signature ||
+    ((!expected || !safeEqual(signature, expected)) &&
+      (!previousExpected || !safeEqual(signature, previousExpected)))
+  ) {
+    return null;
+  }
   try {
     const session = JSON.parse(decode(payload)) as SignalOpsOperatorSessionV1;
     if (
       !session.tenantId ||
       !session.tenantName ||
       !session.subject ||
+      !["owner", "operator", "viewer"].includes(session.role) ||
+      !["password", "supabase"].includes(session.authMode) ||
+      !Number.isInteger(session.issuedAt) ||
+      !Number.isInteger(session.expiresAt) ||
+      session.issuedAt > Math.floor(Date.now() / 1_000) + 60 ||
+      session.expiresAt <= session.issuedAt ||
       session.expiresAt <= Math.floor(Date.now() / 1_000)
     ) {
       return null;
@@ -100,8 +154,11 @@ export function readSignalOpsOperatorSessionV1(
 
 export function serializeSignalOpsOperatorSessionCookieV1(token: string): string {
   const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
-  const ttlSeconds = Number(process.env.SIGNALOPS_SESSION_TTL_SECONDS ?? 8 * 60 * 60);
-  const maxAge = Number.isFinite(ttlSeconds) && ttlSeconds > 0 ? ttlSeconds : 8 * 60 * 60;
+  const ttlSeconds = Number(process.env.SIGNALOPS_SESSION_TTL_SECONDS ?? 60 * 60);
+  const maxAge =
+    Number.isFinite(ttlSeconds) && ttlSeconds > 0
+      ? Math.max(300, Math.min(ttlSeconds, 24 * 60 * 60))
+      : 60 * 60;
   return `${signalOpsCockpitSessionCookieV1}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure}`;
 }
 

@@ -29,9 +29,14 @@ export async function resolveSignalOpsTenantPrincipalV1(
   const tokenHash = hashSignalOpsCredentialV1(token);
   const configuredHash = process.env.SIGNALOPS_INGEST_TOKEN_HASH?.trim();
   const configuredToken = process.env.SIGNALOPS_INGEST_TOKEN?.trim();
-  const matchesBootstrapCredential = configuredHash
-    ? safeEqual(tokenHash, configuredHash)
-    : Boolean(configuredToken && safeEqual(token, configuredToken));
+  const bootstrapAllowed =
+    process.env.NODE_ENV !== "production" ||
+    process.env.SIGNALOPS_ALLOW_BOOTSTRAP_CREDENTIAL === "true";
+  const matchesBootstrapCredential =
+    bootstrapAllowed &&
+    (configuredHash
+      ? safeEqual(tokenHash, configuredHash)
+      : Boolean(configuredToken && safeEqual(token, configuredToken)));
 
   if (matchesBootstrapCredential) {
     return {

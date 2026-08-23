@@ -54,7 +54,11 @@ workspace password, session secret, and ingest token before testing live mode.
 - `POST /v1/events` accepts canonical AI telemetry using a tenant Bearer credential.
 - `POST /v1/events/validate` validates the same contract without storing it.
 - `GET /v1/ops/snapshot?range=24h|7d|30d|90d` requires a signed operator session.
+- `GET /v1/incidents` lists tenant incidents; ingest and the authenticated internal evaluator
+  maintain their open/resolved lifecycle.
 - `/schemas/ai-telemetry/v1` publishes the exact JSON Schema named by canonical events.
+- `/schemas/ai-telemetry/v1/ingest-response` publishes the closed success-envelope schema used by
+  producers to reconcile stored, duplicate, conflicting, and rejected event IDs.
 - `/api/readiness` reports storage, operator-auth, and ingest-auth configuration without secrets.
 
 Phosphene is the first tenant, not a special schema. SignalOps receives opaque operation/attempt
@@ -66,6 +70,18 @@ Local development uses an append-only file under `.data/`. Hosted production fai
 a Supabase backend is configured (or local storage is explicitly opted into). The committed
 Supabase migration enables RLS and revokes `anon`/`authenticated` table access; secret/service-role
 credentials stay server-only.
+
+Hosted operators sign in through a pre-provisioned Supabase account using an email magic link or an
+allowlisted OAuth provider. Authentication alone grants no access: every request revalidates an
+active `signalops_v1_operator_memberships` row, and the cockpit can switch only among those tenant
+memberships. New users and ingest credentials are created explicitly with the admin workflow in
+[`docs/runbooks/signalops-operations.md`](docs/runbooks/signalops-operations.md); public self-signup
+is disabled.
+
+Accepted ingest schedules incident evaluation immediately after the durable receipt is returned.
+The authenticated daily job at `/api/internal/evaluate` also closes stale incidents and applies the
+configured retention policy. Raw events default to 100 days so the 90-day cockpit remains
+rebuildable; conflicts and audit rows default to 400 days, and rate-limit buckets to two days.
 
 ## Legacy v0 event API boundaries
 

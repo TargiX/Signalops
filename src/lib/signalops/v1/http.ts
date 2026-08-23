@@ -14,6 +14,10 @@ export async function readSignalOpsJsonBodyV1(
   request: Request,
   maxBytes = SIGNALOPS_V1_LIMITS.maxBodyBytes,
 ): Promise<unknown> {
+  const contentType = request.headers.get("content-type")?.split(";", 1)[0]?.trim();
+  if (contentType !== "application/json") {
+    throw new SignalOpsHttpErrorV1(415, "unsupported_media_type", "content-type must be application/json");
+  }
   const declaredLength = Number(request.headers.get("content-length"));
   if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
     throw new SignalOpsHttpErrorV1(413, "payload_too_large", `request body exceeds ${maxBytes} bytes`);
@@ -26,5 +30,28 @@ export async function readSignalOpsJsonBodyV1(
     return JSON.parse(text);
   } catch {
     throw new SignalOpsHttpErrorV1(400, "invalid_json", "request body must be valid JSON");
+  }
+}
+
+export function assertSignalOpsSameOriginV1(request: Request): void {
+  const origin = request.headers.get("origin");
+  if (!origin) {
+    if (process.env.NODE_ENV === "production") {
+      throw new SignalOpsHttpErrorV1(403, "csrf_rejected", "a same-origin request is required");
+    }
+    return;
+  }
+  const requestUrl = new URL(request.url);
+  const expected = process.env.SIGNALOPS_PUBLIC_URL?.trim();
+  let allowedOrigin: string;
+  let requestOrigin: string;
+  try {
+    allowedOrigin = expected ? new URL(expected).origin : requestUrl.origin;
+    requestOrigin = new URL(origin).origin;
+  } catch {
+    throw new SignalOpsHttpErrorV1(403, "csrf_rejected", "a same-origin request is required");
+  }
+  if (requestOrigin !== allowedOrigin) {
+    throw new SignalOpsHttpErrorV1(403, "csrf_rejected", "a same-origin request is required");
   }
 }

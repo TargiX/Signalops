@@ -390,6 +390,9 @@ Reusing the same ID for a different canonical payload is an idempotency conflict
 
 The ingest receipt reports accepted, stored, duplicate, rejected, and conflicted counts plus opaque
 event references. It never echoes tenant credentials or sensitive payload values.
+The successful HTTP response is normatively defined by
+`schemas/ai-telemetry/v1/ingest-response.schema.json`; producers MUST validate that artifact rather
+than depending on undocumented envelope fields.
 
 Producers SHOULD batch events, retry timeouts, `429`, and `5xx` with bounded exponential backoff and
 jitter, and retain a dead-letter record after the retry budget is exhausted. A telemetry failure

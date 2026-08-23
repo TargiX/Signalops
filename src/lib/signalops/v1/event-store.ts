@@ -29,6 +29,10 @@ export interface SignalOpsEventReaderV1 {
     tenantId: string,
     options?: { since?: string; limit?: number },
   ): Promise<StoredSignalOpsEventV1[]>;
+  watermark(
+    tenantId: string,
+    options?: { since?: string },
+  ): Promise<{ receivedAt: string | null; eventId: string | null; eventCount: number }>;
 }
 
 export type MemorySignalOpsEventStoreV1 = SignalOpsEventStoreV1 & SignalOpsEventReaderV1 & {
@@ -90,7 +94,7 @@ export function createMemorySignalOpsEventStoreV1(
     },
     async list(tenantId, options = {}) {
       const sinceMs = options.since ? Date.parse(options.since) : Number.NEGATIVE_INFINITY;
-      const limit = Math.max(1, Math.min(options.limit ?? 5_000, 10_000));
+      const limit = Math.max(1, Math.min(options.limit ?? 5_000, 100_001));
 
       return [...records.values()]
         .filter(
@@ -101,6 +105,27 @@ export function createMemorySignalOpsEventStoreV1(
         .sort((left, right) => right.event.time.localeCompare(left.event.time))
         .slice(0, limit)
         .map((record) => structuredClone(record));
+    },
+    async watermark(tenantId, options = {}) {
+      const sinceMs = options.since ? Date.parse(options.since) : Number.NEGATIVE_INFINITY;
+      const latest = [...records.values()]
+        .filter(
+          (record) =>
+            record.tenantId === tenantId && Date.parse(record.event.time) >= sinceMs,
+        )
+        .sort(
+          (left, right) =>
+            right.receivedAt.localeCompare(left.receivedAt) ||
+            right.event.id.localeCompare(left.event.id),
+        )[0];
+      return {
+        receivedAt: latest?.receivedAt ?? null,
+        eventId: latest?.event.id ?? null,
+        eventCount: [...records.values()].filter(
+          (record) =>
+            record.tenantId === tenantId && Date.parse(record.event.time) >= sinceMs,
+        ).length,
+      };
     },
   };
 }
