@@ -250,6 +250,8 @@ const migration = await readFile(
 assert.match(migration, /enable row level security/g);
 assert.match(migration, /signalops_v1_consume_rate_limit/);
 assert.match(migration, /signalops_v1_apply_retention/);
+assert.match(migration, /v_now timestamptz := clock_timestamp\(\)/);
+assert.doesNotMatch(migration, /current_time timestamptz/);
 assert.match(migration, /from public, anon, authenticated/);
 assert.match(migration, /to service_role/);
 

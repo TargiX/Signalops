@@ -160,7 +160,7 @@ security invoker
 set search_path = pg_catalog, public
 as $$
 declare
-  current_time timestamptz := clock_timestamp();
+  v_now timestamptz := clock_timestamp();
   bucket_start timestamptz;
   bucket_count integer;
 begin
@@ -172,7 +172,7 @@ begin
   end if;
 
   bucket_start := to_timestamp(
-    floor(extract(epoch from current_time) / p_window_seconds) * p_window_seconds
+    floor(extract(epoch from v_now) / p_window_seconds) * p_window_seconds
   );
 
   insert into public.signalops_v1_rate_limit_buckets (
@@ -184,7 +184,7 @@ begin
     p_bucket_key,
     bucket_start,
     1,
-    current_time
+    v_now
   )
   on conflict (bucket_key, window_start) do update
     set request_count = public.signalops_v1_rate_limit_buckets.request_count + 1,
