@@ -39,9 +39,7 @@ if (isConfigured) {
     }
   }
 } else if (process.env.NODE_ENV === "development") {
-  console.error(
-    new Error(
-      "NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN and NEXT_PUBLIC_POSTHOG_HOST variables required by PostHog are missing or un-configured, this causes events to be silently missed. This error stops appearing once NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN and NEXT_PUBLIC_POSTHOG_HOST are configured",
-    ),
+  console.info(
+    "[SignalOps] PostHog is disabled because local analytics credentials are not configured.",
   );
 }

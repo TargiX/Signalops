@@ -24,12 +24,19 @@ export interface SignalOpsEventStoreV1 {
   ): Promise<SignalOpsEventStoreWriteResultV1>;
 }
 
-export type MemorySignalOpsEventStoreV1 = SignalOpsEventStoreV1 & {
+export interface SignalOpsEventReaderV1 {
+  list(
+    tenantId: string,
+    options?: { since?: string; limit?: number },
+  ): Promise<StoredSignalOpsEventV1[]>;
+}
+
+export type MemorySignalOpsEventStoreV1 = SignalOpsEventStoreV1 & SignalOpsEventReaderV1 & {
   reset(): void;
   snapshot(tenantId?: string): StoredSignalOpsEventV1[];
 };
 
-function eventDigest(event: SignalOpsEventV1): string {
+export function signalOpsEventDigestV1(event: SignalOpsEventV1): string {
   return createHash("sha256").update(canonicalSignalOpsEventTextV1(event), "utf8").digest("hex");
 }
 
@@ -50,7 +57,7 @@ export function createMemorySignalOpsEventStoreV1(
 
       for (const event of events) {
         const key = `${tenantId}:${event.id}`;
-        const payloadDigest = eventDigest(event);
+        const payloadDigest = signalOpsEventDigestV1(event);
         const existing = records.get(key);
 
         if (existing) {
@@ -79,6 +86,20 @@ export function createMemorySignalOpsEventStoreV1(
     snapshot(tenantId) {
       return [...records.values()]
         .filter((record) => tenantId === undefined || record.tenantId === tenantId)
+        .map((record) => structuredClone(record));
+    },
+    async list(tenantId, options = {}) {
+      const sinceMs = options.since ? Date.parse(options.since) : Number.NEGATIVE_INFINITY;
+      const limit = Math.max(1, Math.min(options.limit ?? 5_000, 10_000));
+
+      return [...records.values()]
+        .filter(
+          (record) =>
+            record.tenantId === tenantId &&
+            Date.parse(record.event.time) >= sinceMs,
+        )
+        .sort((left, right) => right.event.time.localeCompare(left.event.time))
+        .slice(0, limit)
         .map((record) => structuredClone(record));
     },
   };
