@@ -15,6 +15,15 @@ import {
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useState } from "react";
 
+import {
+  LatencyChart,
+  PerformanceScatterChart,
+  SpendDonutChart,
+  ThroughputChart,
+  TrafficAreaChart,
+  type ChartProvider,
+  type ChartTimeBucket,
+} from "@/components/charts";
 import type { SignalOpsIncidentV1 } from "@/lib/signalops/v1/incidents";
 import type {
   SignalOpsCurrencyCostV1,
@@ -57,6 +66,14 @@ const emptySession: SessionResponse = {
   memberships: [],
 };
 
+const chartColors = ["#3459df", "#24a17e", "#e6a23c", "#d24b63", "#7b61d1", "#168aad"];
+
+type SelectedChartCost = {
+  currency: string;
+  source: "reported" | "estimated";
+  value: number;
+};
+
 function formatNumber(value: number | null): string {
   return value === null ? "—" : new Intl.NumberFormat("en-US").format(value);
 }
@@ -85,6 +102,50 @@ function formatMoney(value: number, currency: string): string {
 
 function reportedCost(row: SignalOpsCurrencyCostV1): number {
   return row.billing_reconciled + row.provider_reported;
+}
+
+function selectChartCost(rows: SignalOpsCurrencyCostV1[]): SelectedChartCost | null {
+  if (rows.length !== 1) return null;
+  const row = rows[0];
+  if (!row) return null;
+  const reported = reportedCost(row);
+  return reported > 0
+    ? { currency: row.currency, source: "reported", value: reported }
+    : {
+        currency: row.currency,
+        source: "estimated",
+        value: row.catalog_estimate,
+      };
+}
+
+function chartCostValue(
+  rows: SignalOpsCurrencyCostV1[],
+  selected: SelectedChartCost | null,
+): number {
+  if (!selected) return 0;
+  const row = rows.find((cost) => cost.currency === selected.currency);
+  if (!row) return 0;
+  return selected.source === "reported" ? reportedCost(row) : row.catalog_estimate;
+}
+
+function timelineLabel(value: string, range: SignalOpsOpsRangeV1): string {
+  const date = new Date(value);
+  if (range === "24h") {
+    return new Intl.DateTimeFormat("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+    }).format(date);
+  }
+  if (range === "7d") {
+    return new Intl.DateTimeFormat("en-US", {
+      weekday: "short",
+      hour: "numeric",
+    }).format(date);
+  }
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+  }).format(date);
 }
 
 function costSummary(rows: SignalOpsCurrencyCostV1[], source: "reported" | "estimated"): string {
@@ -293,7 +354,7 @@ export function LiveCockpit() {
           <p className="mt-7 font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--accent)]">SignalOps workspace</p>
           <h1 className="mt-2 text-3xl font-semibold tracking-tight text-[var(--text-strong)]">Open your live cockpit</h1>
           <p className="mt-3 text-sm leading-6 text-[var(--text-dim)]">
-            Sign in as a SignalOps operator. Phosphene only receives a revocable service credential and never shares prompts, email addresses, or customer identity.
+            Sign in as a SignalOps operator. Source applications receive revocable service credentials and never share prompts, email addresses, or customer identity.
           </p>
 
           {session.auth.emailOtp ? (
@@ -399,6 +460,52 @@ export function LiveCockpit() {
     snapshot.dataQuality.contradictoryTerminals +
     snapshot.dataQuality.identityCollisions +
     snapshot.dataQuality.idempotencyConflicts;
+  const selectedChartCost = selectChartCost(snapshot.totals.costByCurrency);
+  const timelineData: ChartTimeBucket[] = snapshot.timeline.map((bucket) => ({
+    time: timelineLabel(bucket.start, range),
+    volume: bucket.operations,
+    failures: bucket.failedOperations,
+    latency: bucket.p95DurationMs,
+    spend: chartCostValue(bucket.costByCurrency, selectedChartCost),
+  }));
+  const providerChartData: ChartProvider[] = snapshot.providers.flatMap(
+    (provider, index) => {
+      if (provider.p95DurationMs === null || provider.attempts === 0) return [];
+      return [
+        {
+          id: `${provider.providerKey}:${provider.modelKey}`,
+          name: `${provider.providerVendor || provider.providerKey} · ${provider.modelKey}`,
+          p95Ms: provider.p95DurationMs,
+          failureRate:
+            provider.successRate === null ? 0 : (1 - provider.successRate) * 100,
+          spend: chartCostValue(provider.costByCurrency, selectedChartCost),
+          volume: provider.attempts,
+          color: chartColors[index % chartColors.length] ?? "#3459df",
+        },
+      ];
+    },
+  );
+  const spendProviderData: ChartProvider[] = snapshot.providers
+    .map((provider, index) => ({
+      id: `${provider.providerKey}:${provider.modelKey}`,
+      name: `${provider.providerVendor || provider.providerKey} · ${provider.modelKey}`,
+      p95Ms: provider.p95DurationMs ?? 0,
+      failureRate:
+        provider.successRate === null ? 0 : (1 - provider.successRate) * 100,
+      spend: chartCostValue(provider.costByCurrency, selectedChartCost),
+      volume: provider.attempts,
+      color: chartColors[index % chartColors.length] ?? "#3459df",
+    }))
+    .filter((provider) => provider.spend > 0);
+  const hasTimelineVolume = timelineData.some(
+    (bucket) => bucket.volume > 0 || bucket.failures > 0,
+  );
+  const hasLatency = timelineData.some((bucket) => bucket.latency !== null);
+  const spendSubtitle = selectedChartCost
+    ? `${selectedChartCost.source} cost by provider route · ${selectedChartCost.currency}`
+    : snapshot.totals.costByCurrency.length > 1
+      ? "Multiple live currencies stay separate and are never summed"
+      : "No reported or catalog-estimated cost in this window";
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_78%_0%,rgba(52,89,223,0.10),transparent_28%),#f8faff] text-[var(--text)]">
       <div className="mx-auto w-full max-w-[1440px] px-5 py-6 sm:px-8 lg:px-10">
@@ -461,6 +568,59 @@ export function LiveCockpit() {
           <Metric icon={DollarSign} label="Reported cost" value={costSummary(snapshot.totals.costByCurrency, "reported")} detail={`${costSummary(snapshot.totals.costByCurrency, "estimated")} estimated`} />
         </section>
 
+        <section className="mt-6 grid gap-4 xl:grid-cols-[1.35fr_0.9fr]">
+          <Panel title="Throughput" subtitle={`${range} operation volume vs failures`}>
+            {hasTimelineVolume ? (
+              <ThroughputChart data={timelineData} />
+            ) : (
+              <EmptyState text="No operation volume is available in this live window yet." />
+            )}
+          </Panel>
+          <Panel title="Latency tail" subtitle="Operation p95 by canonical start-time bucket">
+            {hasLatency ? (
+              <LatencyChart data={timelineData} />
+            ) : (
+              <EmptyState text="Latency appears after the first operation reaches a terminal state." />
+            )}
+          </Panel>
+        </section>
+
+        <section className="mt-4 grid gap-4 xl:grid-cols-3">
+          <Panel title="Spend distribution" subtitle={spendSubtitle}>
+            {selectedChartCost && selectedChartCost.value > 0 && spendProviderData.length > 0 ? (
+              <SpendDonutChart
+                data={spendProviderData}
+                currency={selectedChartCost.currency}
+              />
+            ) : (
+              <EmptyState text="Spend distribution needs one live currency and positive cost evidence." />
+            )}
+          </Panel>
+          <Panel
+            title="Performance matrix"
+            subtitle={
+              providerChartData.length === 0
+                ? "Insufficient live provider data; no terminal attempt latency in this window."
+                : providerChartData.length === 1
+                ? "Insufficient live provider data for comparison; plotting the available route."
+                : "Provider routes by speed, reliability, and attempt volume"
+            }
+          >
+            {providerChartData.length > 0 ? (
+              <PerformanceScatterChart data={providerChartData} />
+            ) : (
+              <EmptyState text="Performance comparison appears after a provider attempt records latency." />
+            )}
+          </Panel>
+          <Panel title="Traffic wave" subtitle="Operation volume over the selected live window">
+            {hasTimelineVolume ? (
+              <TrafficAreaChart data={timelineData} />
+            ) : (
+              <EmptyState text="The traffic wave appears after the source application sends an operation." />
+            )}
+          </Panel>
+        </section>
+
         {incidents.length > 0 ? (
           <section className="mt-6 rounded-xl border border-rose-200 bg-white p-5 shadow-[var(--shadow-1)] sm:p-6">
             <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-sm font-semibold text-[var(--text-strong)]">Open incidents</h2><p className="mt-1 text-[11px] text-[var(--text-dim)]">Stable policy-based signals, scoped to this workspace</p></div><span className="rounded-full bg-rose-50 px-2.5 py-1 text-[10px] font-bold text-rose-700 ring-1 ring-rose-200">{incidents.length} open</span></div>
@@ -475,9 +635,9 @@ export function LiveCockpit() {
           </section>
         ) : null}
 
-        <section className="mt-6 grid gap-5 xl:grid-cols-[0.95fr_1.35fr]">
-          <Panel title="Provider and model health" subtitle="Attempts, latency, outcome, and cost without customer data">
-            {snapshot.providers.length === 0 ? <EmptyState text="Provider attempts will appear after Phosphene delivers its first terminal attempt." /> : (
+        <section className="mt-6 grid gap-5 xl:grid-cols-2">
+          <Panel title="Provider route health" subtitle="Attempts, latency, outcome, and cost without customer data">
+            {snapshot.providers.length === 0 ? <EmptyState text="Provider attempts will appear after the source application delivers its first terminal attempt." /> : (
               <div className="divide-y divide-[var(--border-soft)]">
                 {snapshot.providers.map((provider) => (
                   <div key={`${provider.providerKey}:${provider.modelKey}`} className="grid gap-3 py-4 first:pt-0 last:pb-0 sm:grid-cols-[1fr_auto_auto] sm:items-center">
@@ -490,20 +650,51 @@ export function LiveCockpit() {
             )}
           </Panel>
 
-          <Panel title="Recent operations" subtitle="Opaque operation IDs only; no prompt, media URL, email, or user identifier">
-            {snapshot.recentOperations.length === 0 ? <EmptyState text="The pipeline is connected. Make a Phosphene generation to populate this table." /> : (
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[720px] text-left">
-                  <thead><tr className="border-b border-[var(--border)] font-mono text-[9px] uppercase tracking-[0.08em] text-[var(--mute)]"><th className="pb-3 font-semibold">Operation</th><th className="pb-3 font-semibold">Status</th><th className="pb-3 font-semibold">Model class</th><th className="pb-3 font-semibold">Duration</th><th className="pb-3 font-semibold">Attempts</th><th className="pb-3 text-right font-semibold">Seen</th></tr></thead>
-                  <tbody className="divide-y divide-[var(--border-soft)]">
-                    {snapshot.recentOperations.map((operation) => (
-                      <tr key={operation.operationId} className="text-xs"><td className="py-3.5"><p className="max-w-[180px] truncate font-mono text-[10px] font-semibold text-[var(--text-strong)]">{operation.operationId}</p><p className="mt-1 text-[10px] text-[var(--text-dim)]">{operation.service} · {operation.environment}</p></td><td className="py-3.5"><span className={`rounded-full px-2 py-1 text-[10px] font-bold ring-1 ${statusTone(operation.status)}`}>{operation.status}</span></td><td className="py-3.5 text-[var(--text-dim)]">{operation.logicalModelKey || operation.kind}</td><td className="py-3.5 font-medium">{formatDuration(operation.durationMs)}</td><td className="py-3.5 font-medium">{formatNumber(operation.attemptCount)}</td><td className="py-3.5 text-right text-[var(--text-dim)]">{relativeTime(operation.occurredAt)}</td></tr>
-                    ))}
-                  </tbody>
-                </table>
+          <Panel title="Model performance" subtitle="Logical model classes from canonical operation lifecycles">
+            {snapshot.models.length === 0 ? (
+              <EmptyState text="Model performance appears after the source application sends an operation." />
+            ) : (
+              <div className="divide-y divide-[var(--border-soft)]">
+                {snapshot.models.map((model) => (
+                  <div
+                    key={model.modelKey}
+                    className="grid gap-3 py-4 first:pt-0 last:pb-0 sm:grid-cols-[1fr_auto] sm:items-center"
+                  >
+                    <div>
+                      <p className="font-mono text-[11px] font-semibold text-[var(--text-strong)]">
+                        {model.modelKey}
+                      </p>
+                      <p className="mt-1 text-[10px] text-[var(--text-dim)]">
+                        {formatNumber(model.succeeded)} succeeded · {formatNumber(model.failed)} failed
+                      </p>
+                    </div>
+                    <div className="grid grid-cols-3 gap-5 text-right">
+                      <Mini label="Operations" value={formatNumber(model.operations)} />
+                      <Mini label="p95" value={formatDuration(model.p95DurationMs)} />
+                      <Mini label="Success" value={formatPercent(model.successRate)} />
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
           </Panel>
+
+          <div className="xl:col-span-2">
+            <Panel title="Recent operations" subtitle="Opaque operation IDs only; no prompt, media URL, email, or user identifier">
+              {snapshot.recentOperations.length === 0 ? <EmptyState text="The pipeline is connected. Trigger an AI operation in the source application to populate this table." /> : (
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[720px] text-left">
+                    <thead><tr className="border-b border-[var(--border)] font-mono text-[9px] uppercase tracking-[0.08em] text-[var(--mute)]"><th className="pb-3 font-semibold">Operation</th><th className="pb-3 font-semibold">Status</th><th className="pb-3 font-semibold">Model class</th><th className="pb-3 font-semibold">Duration</th><th className="pb-3 font-semibold">Attempts</th><th className="pb-3 text-right font-semibold">Seen</th></tr></thead>
+                    <tbody className="divide-y divide-[var(--border-soft)]">
+                      {snapshot.recentOperations.map((operation) => (
+                        <tr key={operation.operationId} className="text-xs"><td className="py-3.5"><p className="max-w-[180px] truncate font-mono text-[10px] font-semibold text-[var(--text-strong)]">{operation.operationId}</p><p className="mt-1 text-[10px] text-[var(--text-dim)]">{operation.service} · {operation.environment}</p></td><td className="py-3.5"><span className={`rounded-full px-2 py-1 text-[10px] font-bold ring-1 ${statusTone(operation.status)}`}>{operation.status}</span></td><td className="py-3.5 text-[var(--text-dim)]">{operation.logicalModelKey || operation.kind}</td><td className="py-3.5 font-medium">{formatDuration(operation.durationMs)}</td><td className="py-3.5 font-medium">{formatNumber(operation.attemptCount)}</td><td className="py-3.5 text-right text-[var(--text-dim)]">{relativeTime(operation.occurredAt)}</td></tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Panel>
+          </div>
         </section>
         <footer className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border)] py-5 text-[10px] text-[var(--mute)]"><span>Auto-refreshes every 10 seconds · {snapshot.projection.sourceEventCount} source events · snapshot generated {new Date(snapshot.generatedAt).toLocaleTimeString()}</span><a className="font-semibold hover:text-[var(--accent)]" href="/schemas/ai-telemetry/v1">Canonical schema</a></footer>
       </div>
@@ -516,7 +707,7 @@ function Metric({ icon: Icon, label, value, detail }: { icon: typeof Activity; l
 }
 
 function Panel({ title, subtitle, children }: { title: string; subtitle: string; children: React.ReactNode }) {
-  return <section className="rounded-xl border border-[var(--border)] bg-white p-5 shadow-[var(--shadow-1)] sm:p-6"><div className="mb-5"><h2 className="text-sm font-semibold text-[var(--text-strong)]">{title}</h2><p className="mt-1 text-[11px] text-[var(--text-dim)]">{subtitle}</p></div>{children}</section>;
+  return <section className="min-w-0 rounded-xl border border-[var(--border)] bg-white p-5 shadow-[var(--shadow-1)] sm:p-6"><div className="mb-5"><h2 className="text-sm font-semibold text-[var(--text-strong)]">{title}</h2><p className="mt-1 text-[11px] text-[var(--text-dim)]">{subtitle}</p></div>{children}</section>;
 }
 
 function Mini({ label, value }: { label: string; value: string }) {

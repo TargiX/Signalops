@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 
 import { resolveSignalOpsTenantPrincipalV1 } from "../src/lib/signalops/v1/auth.ts";
 import {
+  configuredSignalOpsTenantV1,
   createSignalOpsOperatorSessionTokenV1,
+  isSignalOpsOperatorAuthConfiguredV1,
   readSignalOpsOperatorSessionV1,
   serializeSignalOpsOperatorSessionCookieV1,
   verifySignalOpsOperatorPasswordV1,
@@ -55,5 +57,40 @@ assert.equal(
   ),
   null,
 );
+
+const originalNodeEnv = process.env.NODE_ENV;
+const originalWorkspaceSlug = process.env.SIGNALOPS_WORKSPACE_SLUG;
+const originalWorkspaceName = process.env.SIGNALOPS_WORKSPACE_NAME;
+const originalBootstrapFlag = process.env.SIGNALOPS_ALLOW_BOOTSTRAP_CREDENTIAL;
+delete process.env.SIGNALOPS_WORKSPACE_SLUG;
+delete process.env.SIGNALOPS_WORKSPACE_NAME;
+process.env.NODE_ENV = "development";
+assert.deepEqual(configuredSignalOpsTenantV1(), {
+  id: "demo",
+  name: "Demo Workspace",
+});
+
+process.env.NODE_ENV = "production";
+process.env.SIGNALOPS_ALLOW_PASSWORD_AUTH = "true";
+process.env.SIGNALOPS_ALLOW_BOOTSTRAP_CREDENTIAL = "true";
+assert.equal(isSignalOpsOperatorAuthConfiguredV1(), false);
+assert.throws(configuredSignalOpsTenantV1, /SIGNALOPS_WORKSPACE_SLUG/);
+assert.equal(
+  await resolveSignalOpsTenantPrincipalV1(
+    new Request("https://signalops.test/v1/events", {
+      headers: { authorization: `Bearer ${process.env.SIGNALOPS_INGEST_TOKEN}` },
+    }),
+  ),
+  null,
+);
+
+if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
+else process.env.NODE_ENV = originalNodeEnv;
+if (originalWorkspaceSlug === undefined) delete process.env.SIGNALOPS_WORKSPACE_SLUG;
+else process.env.SIGNALOPS_WORKSPACE_SLUG = originalWorkspaceSlug;
+if (originalWorkspaceName === undefined) delete process.env.SIGNALOPS_WORKSPACE_NAME;
+else process.env.SIGNALOPS_WORKSPACE_NAME = originalWorkspaceName;
+if (originalBootstrapFlag === undefined) delete process.env.SIGNALOPS_ALLOW_BOOTSTRAP_CREDENTIAL;
+else process.env.SIGNALOPS_ALLOW_BOOTSTRAP_CREDENTIAL = originalBootstrapFlag;
 
 console.log("signalops auth v1 checks passed");

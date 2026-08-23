@@ -40,6 +40,8 @@ function isMatchingSnapshot(
     Number(row.source_event_count) === watermark.eventCount &&
     row.snapshot?.tenant?.id === tenantId &&
     row.snapshot?.range === range &&
+    Array.isArray(row.snapshot?.timeline) &&
+    Array.isArray(row.snapshot?.models) &&
     Date.parse(row.projected_at) >= now.getTime() - 60_000
   );
 }

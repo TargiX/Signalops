@@ -287,9 +287,17 @@ behaviour where it is semantically valid, but introduce a versioned snapshot typ
 - `insufficient_data` provider health;
 - actual and estimated cost separately;
 - operations and attempts separately;
+- chart-ready UTC timeline buckets for operation volume, failures, p95 duration, attempts, and
+  currency-grouped cost;
+- logical-model operation totals, terminal success rate, and p95 duration;
 - data freshness and last projected event;
 - incomplete or conflicting telemetry;
 - tenant and environment labels.
+
+Timeline buckets are deterministic for a snapshot range: `24h` uses 24 one-hour buckets, `7d`
+uses 28 six-hour buckets, and `30d`/`90d` use 30 one-day/three-day buckets. Operations and their
+terminal outcome stay in the operation start bucket; attempts and their cost stay in the attempt
+start bucket. Empty buckets remain present so the live cockpit never substitutes synthetic points.
 
 ### 8.2 Modes
 

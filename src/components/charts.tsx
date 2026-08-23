@@ -17,9 +17,26 @@ import {
   ZAxis,
 } from "recharts";
 import { useEffect, useRef, useState } from "react";
-import type { TimeBucket, Provider } from "@/lib/mock-data";
 import { formatCurrency, formatMs, cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
+
+export type ChartTimeBucket = {
+  time: string;
+  volume: number;
+  failures: number;
+  latency: number | null;
+  spend: number;
+};
+
+export type ChartProvider = {
+  id: string;
+  name: string;
+  p95Ms: number;
+  failureRate: number;
+  spend: number;
+  volume: number;
+  color: string;
+};
 
 const tooltipStyle = {
   background: "color-mix(in oklch, var(--surface) 95%, transparent)",
@@ -70,7 +87,7 @@ function GlowingCursor({ x, width = 0, height = 0, tone = "accent" }: GlowingCur
   );
 }
 
-export function ThroughputChart({ data }: { data: TimeBucket[] }) {
+export function ThroughputChart({ data }: { data: ChartTimeBucket[] }) {
   const [containerRef, width] = useChartWidth();
 
   return (
@@ -114,7 +131,7 @@ export function ThroughputChart({ data }: { data: TimeBucket[] }) {
   );
 }
 
-export function LatencyChart({ data }: { data: TimeBucket[] }) {
+export function LatencyChart({ data }: { data: ChartTimeBucket[] }) {
   const [containerRef, width] = useChartWidth();
 
   return (
@@ -175,7 +192,13 @@ function useChartWidth() {
   return [ref, width] as const;
 }
 
-export function SpendDonutChart({ data }: { data: Provider[] }) {
+export function SpendDonutChart({
+  data,
+  currency = "USD",
+}: {
+  data: ChartProvider[];
+  currency?: string;
+}) {
   const [containerRef, width] = useChartWidth();
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
 
@@ -236,7 +259,7 @@ export function SpendDonutChart({ data }: { data: Provider[] }) {
                     {activeItem.name}
                   </span>
                   <span className="text-xl font-bold tracking-tight text-[var(--text)]">
-                    {formatCurrency(activeItem.spend)}
+                    {formatCurrency(activeItem.spend, currency)}
                   </span>
                   <span 
                     className="mt-1 rounded-full px-2 py-0.5 text-[11px] font-semibold" 
@@ -257,7 +280,7 @@ export function SpendDonutChart({ data }: { data: Provider[] }) {
                     Total Spend
                   </span>
                   <span className="text-xl font-bold tracking-tight text-[var(--text)]">
-                    {formatCurrency(totalSpend)}
+                    {formatCurrency(totalSpend, currency)}
                   </span>
                 </motion.div>
               )}
@@ -269,7 +292,7 @@ export function SpendDonutChart({ data }: { data: Provider[] }) {
   );
 }
 
-export function TrafficAreaChart({ data }: { data: TimeBucket[] }) {
+export function TrafficAreaChart({ data }: { data: ChartTimeBucket[] }) {
   const [containerRef, width] = useChartWidth();
 
   return (
@@ -310,7 +333,7 @@ export function TrafficAreaChart({ data }: { data: TimeBucket[] }) {
   );
 }
 
-export function PerformanceScatterChart({ data }: { data: Provider[] }) {
+export function PerformanceScatterChart({ data }: { data: ChartProvider[] }) {
   const [containerRef, width] = useChartWidth();
   const [isFirstHover, setIsFirstHover] = useState(true);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);

@@ -56,9 +56,13 @@ export function isSignalOpsOperatorAuthConfiguredV1(): boolean {
   const passwordAllowed =
     process.env.NODE_ENV !== "production" ||
     process.env.SIGNALOPS_ALLOW_PASSWORD_AUTH === "true";
+  const workspaceConfigured =
+    process.env.NODE_ENV !== "production" ||
+    Boolean(process.env.SIGNALOPS_WORKSPACE_SLUG?.trim());
   const password = process.env.SIGNALOPS_COCKPIT_PASSWORD?.trim();
   return Boolean(
     passwordAllowed &&
+      workspaceConfigured &&
       password &&
       (process.env.NODE_ENV !== "production" || password.length >= 16) &&
       sessionSecret(),
@@ -71,10 +75,16 @@ export function verifySignalOpsOperatorPasswordV1(value: unknown): boolean {
 }
 
 export function configuredSignalOpsTenantV1(): { id: string; name: string } {
-  const id = process.env.SIGNALOPS_WORKSPACE_SLUG?.trim() || "phosphene-production";
+  const configuredId = process.env.SIGNALOPS_WORKSPACE_SLUG?.trim();
+  if (!configuredId && process.env.NODE_ENV === "production") {
+    throw new Error("SIGNALOPS_WORKSPACE_SLUG is required in production");
+  }
+  const id = configuredId || "demo";
   return {
     id,
-    name: process.env.SIGNALOPS_WORKSPACE_NAME?.trim() || (id === "phosphene-production" ? "Phosphene" : id),
+    name:
+      process.env.SIGNALOPS_WORKSPACE_NAME?.trim() ||
+      (id === "demo" ? "Demo Workspace" : id),
   };
 }
 
