@@ -33,6 +33,12 @@ export async function readSignalOpsJsonBodyV1(
   }
 }
 
+export function isSignalOpsJsonObjectV1(
+  value: unknown,
+): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 export function assertSignalOpsSameOriginV1(request: Request): void {
   const origin = request.headers.get("origin");
   if (!origin) {

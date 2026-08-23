@@ -10,6 +10,7 @@ import {
   Database,
   DollarSign,
   ExternalLink,
+  Gauge,
   LogOut,
   RefreshCw,
   ShieldCheck,
@@ -44,6 +45,7 @@ import type {
   SignalOpsOperatorMembershipV1,
   SignalOpsOperatorRoleV1,
 } from "@/lib/signalops/v1/operator-directory";
+import type { SignalOpsSloEvaluationV1 } from "@/lib/signalops/v1/slo";
 
 type SnapshotResponse =
   | { ok: true; snapshot: SignalOpsOpsSnapshotV1 }
@@ -65,6 +67,10 @@ type SessionResponse = {
 
 type IncidentsResponse =
   | { ok: true; incidents: SignalOpsIncidentV1[] }
+  | { ok: false; code: string };
+
+type SlosResponse =
+  | { ok: true; evaluations: SignalOpsSloEvaluationV1[] }
   | { ok: false; code: string };
 
 const emptySession: SessionResponse = {
@@ -97,6 +103,11 @@ function formatPercent(value: number | null): string {
 function formatDuration(value: number | null): string {
   if (value === null) return "—";
   return value >= 1_000 ? `${(value / 1_000).toFixed(1)}s` : `${Math.round(value)}ms`;
+}
+
+function formatSloValue(evaluation: SignalOpsSloEvaluationV1, value: number | null): string {
+  if (evaluation.policy.metric.endsWith("_ms")) return formatDuration(value);
+  return formatPercent(value);
 }
 
 function formatMoney(value: number, currency: string): string {
@@ -214,6 +225,7 @@ export function LiveCockpit() {
   const [range, setRange] = useState<SignalOpsOpsRangeV1>("90d");
   const [snapshot, setSnapshot] = useState<SignalOpsOpsSnapshotV1 | null>(null);
   const [incidents, setIncidents] = useState<SignalOpsIncidentV1[]>([]);
+  const [sloEvaluations, setSloEvaluations] = useState<SignalOpsSloEvaluationV1[]>([]);
   const [session, setSession] = useState<SessionResponse>(emptySession);
   const [state, setState] = useState<"loading" | "ready" | "unauthorized" | "error">("loading");
   const [password, setPassword] = useState("");
@@ -244,6 +256,7 @@ export function LiveCockpit() {
       if (snapshotResponse.status === 401) {
         setSnapshot(null);
         setIncidents([]);
+        setSloEvaluations([]);
         setState("unauthorized");
         return;
       }
@@ -251,11 +264,16 @@ export function LiveCockpit() {
       setSnapshot(snapshotBody.snapshot);
       setState("ready");
 
-      const incidentsResponse = await fetch("/v1/incidents?state=open&limit=20", {
-        cache: "no-store",
-      });
-      const incidentsBody = (await incidentsResponse.json()) as IncidentsResponse;
+      const [incidentsResponse, slosResponse] = await Promise.all([
+        fetch("/v1/incidents?state=active&limit=20", { cache: "no-store" }),
+        fetch("/v1/slos", { cache: "no-store" }),
+      ]);
+      const [incidentsBody, slosBody] = (await Promise.all([
+        incidentsResponse.json(),
+        slosResponse.json(),
+      ])) as [IncidentsResponse, SlosResponse];
       setIncidents(incidentsResponse.ok && incidentsBody.ok ? incidentsBody.incidents : []);
+      setSloEvaluations(slosResponse.ok && slosBody.ok ? slosBody.evaluations : []);
     } catch {
       setState("error");
     }
@@ -361,6 +379,7 @@ export function LiveCockpit() {
     await fetch("/api/cockpit/session", { method: "DELETE" });
     setSnapshot(null);
     setIncidents([]);
+    setSloEvaluations([]);
     setSelectedOperationId(null);
     setState("unauthorized");
     await load();
@@ -708,15 +727,49 @@ export function LiveCockpit() {
           </Panel>
         </section>
 
+        {sloEvaluations.length > 0 ? (
+          <section className="mt-6 rounded-xl border border-[var(--border)] bg-white p-5 shadow-[var(--shadow-1)] sm:p-6">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="flex items-center gap-2 text-sm font-semibold text-[var(--text-strong)]"><Gauge className="size-4 text-[var(--accent)]" /> Reliability objectives</h2>
+                <p className="mt-1 text-[11px] text-[var(--text-dim)]">Versioned 24-hour SLO policies for this workspace; low samples never become false breaches</p>
+              </div>
+              <span className="rounded-full bg-slate-50 px-2.5 py-1 font-mono text-[9px] font-bold text-slate-700 ring-1 ring-slate-200">{sloEvaluations.filter((evaluation) => evaluation.status === "breached").length} breached</span>
+            </div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+              {sloEvaluations.map((evaluation) => {
+                const tone = evaluation.status === "breached"
+                  ? evaluation.severity === "critical"
+                    ? "border-rose-200 bg-rose-50/60 text-rose-800"
+                    : "border-amber-200 bg-amber-50/60 text-amber-900"
+                  : evaluation.status === "met"
+                    ? "border-emerald-200 bg-emerald-50/50 text-emerald-800"
+                    : "border-slate-200 bg-slate-50 text-slate-700";
+                return (
+                  <div key={evaluation.policy.id} className={`min-w-0 rounded-lg border p-4 ${tone}`}>
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="text-[11px] font-semibold leading-4">{evaluation.policy.name}</p>
+                      <span className="rounded-full bg-white/80 px-2 py-0.5 font-mono text-[8px] font-bold uppercase ring-1 ring-current/15">{evaluation.status.replace("_", " ")}</span>
+                    </div>
+                    <p className="mt-4 text-xl font-semibold tracking-tight">{formatSloValue(evaluation, evaluation.observedValue)}</p>
+                    <p className="mt-1 text-[9px] opacity-75">objective {evaluation.policy.comparator === "gte" ? "≥" : "≤"} {formatSloValue(evaluation, evaluation.policy.objective)}</p>
+                    <p className="mt-3 font-mono text-[8px] opacity-65">n={formatNumber(evaluation.sampleSize)} · min {formatNumber(evaluation.policy.minimumSample)} · {evaluation.policy.version}</p>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        ) : null}
+
         {incidents.length > 0 ? (
           <section className="mt-6 rounded-xl border border-rose-200 bg-white p-5 shadow-[var(--shadow-1)] sm:p-6">
-            <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-sm font-semibold text-[var(--text-strong)]">Open incidents</h2><p className="mt-1 text-[11px] text-[var(--text-dim)]">Stable policy-based signals, scoped to this workspace</p></div><span className="rounded-full bg-rose-50 px-2.5 py-1 text-[10px] font-bold text-rose-700 ring-1 ring-rose-200">{incidents.length} open</span></div>
+            <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-sm font-semibold text-[var(--text-strong)]">Active incidents</h2><p className="mt-1 text-[11px] text-[var(--text-dim)]">Stable policy-based signals with evidence, ownership, and lifecycle history</p></div><span className="rounded-full bg-rose-50 px-2.5 py-1 text-[10px] font-bold text-rose-700 ring-1 ring-rose-200">{incidents.length} active</span></div>
             <div className="mt-4 grid gap-3 lg:grid-cols-2">
               {incidents.map((incident) => (
-                <div key={incident.id} className="rounded-lg border border-[var(--border)] bg-[var(--surface-mute)] p-4">
-                  <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-semibold text-[var(--text-strong)]">{incident.title}</p><p className="mt-1 font-mono text-[9px] text-[var(--mute)]">{incident.metric} · {incident.id}</p></div><span className={`rounded-full px-2 py-1 text-[9px] font-bold ring-1 ${incident.severity === "critical" ? "bg-rose-50 text-rose-700 ring-rose-200" : "bg-amber-50 text-amber-800 ring-amber-200"}`}>{incident.severity}</span></div>
+                <a key={incident.id} href={`/incidents/${encodeURIComponent(incident.id)}`} className="group rounded-lg border border-[var(--border)] bg-[var(--surface-mute)] p-4 transition hover:border-[var(--accent)] hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]">
+                  <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-semibold text-[var(--text-strong)]">{incident.title}</p><p className="mt-1 font-mono text-[9px] text-[var(--mute)]">{incident.metric} · {incident.id}</p></div><div className="flex shrink-0 items-center gap-2"><span className={`rounded-full px-2 py-1 text-[9px] font-bold ring-1 ${incident.state === "acknowledged" ? "bg-blue-50 text-blue-700 ring-blue-200" : incident.severity === "critical" ? "bg-rose-50 text-rose-700 ring-rose-200" : "bg-amber-50 text-amber-800 ring-amber-200"}`}>{incident.state === "acknowledged" ? "acknowledged" : incident.severity}</span><ArrowRight className="size-3.5 text-[var(--mute)] transition group-hover:translate-x-0.5 group-hover:text-[var(--accent)]" /></div></div>
                   <p className="mt-3 text-[10px] text-[var(--text-dim)]">Observed {relativeTime(incident.lastObservedAt)} · policy {incident.policyVersion}</p>
-                </div>
+                </a>
               ))}
             </div>
           </section>

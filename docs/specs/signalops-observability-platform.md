@@ -50,10 +50,9 @@ Versioned policies evaluate provider-route health, operation success and latency
 
 ## Delivery increments
 
-Implementation status on 2026-08-23: Increment 1 is live in production. Increment 2 has a
-framework-neutral contracts package, Node producer, memory and HTTP transports, executable
-conformance runner, and Phosphene rollout handoff; the production coverage gate remains open until
-the Phosphene cutover is deployed and observed.
+Implementation status on 2026-08-24: Increments 1 and 2 are live in production. Increment 3 is
+implemented behind its additive migration and release gates. The Phosphene producer-coverage gate
+remains open until the client cutover is deployed and observed.
 
 ### Increment 1 — trustworthy investigation
 
@@ -75,6 +74,8 @@ the Phosphene cutover is deployed and observed.
 - Add versioned tenant reliability policies for operation failure rate, latency, coverage, and freshness.
 - Extend incident evaluation and existing webhook delivery to those policies.
 - Add incident evidence, acknowledgement ownership, and recovery history to the cockpit.
+
+Implementation contract: [`signalops-slo-incidents-v1.md`](signalops-slo-incidents-v1.md).
 
 ### Increment 4 — cost and fleet intelligence
 

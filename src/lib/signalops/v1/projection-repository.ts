@@ -43,6 +43,7 @@ function isMatchingSnapshot(
     Array.isArray(row.snapshot?.timeline) &&
     Array.isArray(row.snapshot?.models) &&
     Array.isArray(row.snapshot?.recentFailedOperations) &&
+    Number.isFinite(row.snapshot?.totals?.operationsWithDuration) &&
     Number.isFinite(row.snapshot?.totals?.operationsWithAttemptTelemetry) &&
     Number.isFinite(row.snapshot?.coverage?.attemptLifecycle?.observed) &&
     Array.isArray(row.snapshot?.failureBreakdown) &&

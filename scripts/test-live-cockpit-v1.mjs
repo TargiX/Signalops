@@ -9,6 +9,9 @@ const [
   snapshotSource,
   projectionSource,
   cockpitViewSource,
+  liveIncidentSource,
+  incidentPageSource,
+  sloSource,
 ] = await Promise.all([
   readFile(new URL("../src/app/cockpit/page.tsx", import.meta.url), "utf8"),
   readFile(new URL("../src/components/live-cockpit.tsx", import.meta.url), "utf8"),
@@ -23,6 +26,9 @@ const [
     new URL("../src/lib/signalops/v1/cockpit-view.ts", import.meta.url),
     "utf8",
   ),
+  readFile(new URL("../src/components/live-incident-detail.tsx", import.meta.url), "utf8"),
+  readFile(new URL("../src/app/incidents/[id]/page.tsx", import.meta.url), "utf8"),
+  readFile(new URL("../src/lib/signalops/v1/slo.ts", import.meta.url), "utf8"),
 ]);
 
 assert.match(
@@ -54,6 +60,7 @@ assert.match(projectionSource, /Array\.isArray\(row\.snapshot\?\.timeline\)/);
 assert.match(projectionSource, /Array\.isArray\(row\.snapshot\?\.models\)/);
 assert.match(projectionSource, /Array\.isArray\(row\.snapshot\?\.recentFailedOperations\)/);
 assert.match(projectionSource, /operationsWithAttemptTelemetry/);
+assert.match(projectionSource, /operationsWithDuration/);
 assert.match(projectionSource, /row\.snapshot\?\.coverage\?\.attemptLifecycle/);
 assert.match(projectionSource, /Array\.isArray\(row\.snapshot\?\.failureBreakdown\)/);
 assert.match(liveSource, /insufficient live provider data/i);
@@ -98,6 +105,18 @@ assert.match(
 );
 assert.match(liveSource, /ariaLabel="Model performance pagination"/);
 assert.match(liveSource, /ariaLabel="Operations pagination"/);
+assert.match(liveSource, /Reliability objectives/);
+assert.match(liveSource, /\/v1\/incidents\?state=active/);
+assert.match(liveSource, /\/v1\/slos/);
+assert.match(liveSource, /href=\{`\/incidents\/\$\{encodeURIComponent\(incident\.id\)\}`\}/);
+assert.match(liveIncidentSource, /Measured evidence/);
+assert.match(liveIncidentSource, /Incident ownership/);
+assert.match(liveIncidentSource, /Lifecycle history/);
+assert.match(liveIncidentSource, /method: "PATCH"/);
+assert.match(incidentPageSource, /demoIncident \? \(/);
+assert.match(incidentPageSource, /<LiveIncidentDetail incidentId=\{id\}/);
+assert.match(sloSource, /minimumSample: 20/);
+assert.match(sloSource, /status: "insufficient_data"/);
 assert.match(
   liveSource,
   /ref=\{operationSectionRef\}[\s\S]*?className="min-w-0 scroll-mt-6/,

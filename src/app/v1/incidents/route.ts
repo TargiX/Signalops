@@ -24,13 +24,19 @@ export async function GET(request: Request) {
   }
   const search = new URL(request.url).searchParams;
   const requestedState = search.get("state");
-  if (requestedState && requestedState !== "open" && requestedState !== "resolved") {
+  if (
+    requestedState &&
+    requestedState !== "active" &&
+    requestedState !== "open" &&
+    requestedState !== "acknowledged" &&
+    requestedState !== "resolved"
+  ) {
     return NextResponse.json(
       { ok: false, requestId, code: "invalid_state" },
       { status: 400, headers: { "cache-control": "private, no-store", "x-request-id": requestId } },
     );
   }
-  const state = requestedState as SignalOpsIncidentStateV1 | null;
+  const state = requestedState as SignalOpsIncidentStateV1 | "active" | null;
   const limit = Math.max(1, Math.min(Number(search.get("limit") ?? 100) || 100, 500));
   try {
     const rateLimit = await enforceSignalOpsRateLimitV1({
