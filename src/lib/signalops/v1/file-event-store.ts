@@ -113,6 +113,23 @@ export function createFileSignalOpsEventStoreV1(options: {
         .slice(0, limit)
         .map((record) => structuredClone(record));
     },
+    async listBySubject(tenantId, subject, options = {}) {
+      await writeQueue;
+      const limit = Math.max(1, Math.min(options.limit ?? 1_000, 10_001));
+      return (await readRecords(filePath))
+        .filter(
+          (record) =>
+            record.tenantId === tenantId && record.event.subject === subject,
+        )
+        .sort(
+          (left, right) =>
+            left.event.time.localeCompare(right.event.time) ||
+            left.receivedAt.localeCompare(right.receivedAt) ||
+            left.event.id.localeCompare(right.event.id),
+        )
+        .slice(0, limit)
+        .map((record) => structuredClone(record));
+    },
     async watermark(tenantId, options = {}) {
       await writeQueue;
       const sinceMs = options.since ? Date.parse(options.since) : Number.NEGATIVE_INFINITY;

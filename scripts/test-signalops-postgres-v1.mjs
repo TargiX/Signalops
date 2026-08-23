@@ -32,6 +32,13 @@ const migrations = await Promise.all([
     ),
     "utf8",
   ),
+  readFile(
+    new URL(
+      "../supabase/migrations/20260823150000_signalops_v1_operation_subject_index.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
 ]);
 
 const { Client } = pg;
@@ -60,6 +67,23 @@ try {
   );
   assert.equal(tables.rows[0].count, 11);
 
+  const subjectColumn = await client.query(
+    `select is_nullable
+     from information_schema.columns
+     where table_schema = 'public'
+       and table_name = 'signalops_v1_events'
+       and column_name = 'subject'`,
+  );
+  assert.deepEqual(subjectColumn.rows, [{ is_nullable: "NO" }]);
+  const subjectIndex = await client.query(
+    `select indexname
+     from pg_indexes
+     where schemaname = 'public'
+       and tablename = 'signalops_v1_events'
+       and indexname = 'signalops_v1_events_tenant_subject_time_idx'`,
+  );
+  assert.equal(subjectIndex.rowCount, 1);
+
   const privileges = await client.query(
     `select
       has_table_privilege('anon', 'public.signalops_v1_events', 'select') as anon_events,
@@ -82,12 +106,20 @@ try {
   );
   await client.query(
     `insert into public.signalops_v1_events(
-      tenant_id, event_id, event_type, event_time, payload, payload_digest, received_at
+      tenant_id, event_id, event_type, event_time, subject, payload, payload_digest, received_at
     ) values
-      ($1, 'evt-old', 'com.signalops.ai.operation.accepted.v1', now() - interval '200 days', '{}', repeat('a', 64), now() - interval '200 days'),
-      ($1, 'evt-new', 'com.signalops.ai.operation.accepted.v1', now(), '{}', repeat('b', 64), now())`,
+      ($1, 'evt-old', 'com.signalops.ai.operation.accepted.v1', now() - interval '200 days', 'operation/sql-old', jsonb_build_object('subject', 'operation/sql-old'), repeat('a', 64), now() - interval '200 days'),
+      ($1, 'evt-new', 'com.signalops.ai.operation.accepted.v1', now(), 'operation/sql-new', jsonb_build_object('subject', 'operation/sql-new'), repeat('b', 64), now())`,
     [tenantId],
   );
+
+  const subjectScoped = await client.query(
+    `select event_id
+     from public.signalops_v1_events
+     where tenant_id = $1 and subject = 'operation/sql-new'`,
+    [tenantId],
+  );
+  assert.deepEqual(subjectScoped.rows, [{ event_id: "evt-new" }]);
 
   await client.query("set role service_role");
   try {

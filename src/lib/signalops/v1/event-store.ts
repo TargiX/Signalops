@@ -29,6 +29,11 @@ export interface SignalOpsEventReaderV1 {
     tenantId: string,
     options?: { since?: string; limit?: number },
   ): Promise<StoredSignalOpsEventV1[]>;
+  listBySubject(
+    tenantId: string,
+    subject: string,
+    options?: { limit?: number },
+  ): Promise<StoredSignalOpsEventV1[]>;
   watermark(
     tenantId: string,
     options?: { since?: string },
@@ -103,6 +108,22 @@ export function createMemorySignalOpsEventStoreV1(
             Date.parse(record.event.time) >= sinceMs,
         )
         .sort((left, right) => right.event.time.localeCompare(left.event.time))
+        .slice(0, limit)
+        .map((record) => structuredClone(record));
+    },
+    async listBySubject(tenantId, subject, options = {}) {
+      const limit = Math.max(1, Math.min(options.limit ?? 1_000, 10_001));
+      return [...records.values()]
+        .filter(
+          (record) =>
+            record.tenantId === tenantId && record.event.subject === subject,
+        )
+        .sort(
+          (left, right) =>
+            left.event.time.localeCompare(right.event.time) ||
+            left.receivedAt.localeCompare(right.receivedAt) ||
+            left.event.id.localeCompare(right.event.id),
+        )
         .slice(0, limit)
         .map((record) => structuredClone(record));
     },

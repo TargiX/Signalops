@@ -54,6 +54,8 @@ assert.match(projectionSource, /Array\.isArray\(row\.snapshot\?\.timeline\)/);
 assert.match(projectionSource, /Array\.isArray\(row\.snapshot\?\.models\)/);
 assert.match(projectionSource, /Array\.isArray\(row\.snapshot\?\.recentFailedOperations\)/);
 assert.match(projectionSource, /operationsWithAttemptTelemetry/);
+assert.match(projectionSource, /row\.snapshot\?\.coverage\?\.attemptLifecycle/);
+assert.match(projectionSource, /Array\.isArray\(row\.snapshot\?\.failureBreakdown\)/);
 assert.match(liveSource, /insufficient live provider data/i);
 assert.match(
   liveSource,
@@ -84,6 +86,11 @@ assert.match(
 );
 assert.match(liveSource, /snapshot\.recentFailedOperations/);
 assert.match(liveSource, /snapshot\.totals\.operationsWithAttemptTelemetry/);
+assert.match(liveSource, /Instrumentation quality/);
+assert.match(liveSource, /Failure intelligence/);
+assert.match(liveSource, /openOperationTrace/);
+assert.match(liveSource, /OperationTraceDrawer/);
+assert.match(liveSource, /Inspect operation/);
 assert.match(
   liveSource,
   /grid[^"]*items-start[^"]*lg:grid-cols/,
@@ -91,6 +98,11 @@ assert.match(
 );
 assert.match(liveSource, /ariaLabel="Model performance pagination"/);
 assert.match(liveSource, /ariaLabel="Operations pagination"/);
+assert.match(
+  liveSource,
+  /ref=\{operationSectionRef\}[\s\S]*?className="min-w-0 scroll-mt-6/,
+  "The horizontally scrollable operations table must not widen the page grid on mobile.",
+);
 assert.match(cockpitViewSource, /export function filterSignalOpsOperationsV1/);
 assert.match(cockpitViewSource, /export function paginateSignalOpsRowsV1/);
 

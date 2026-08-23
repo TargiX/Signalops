@@ -64,6 +64,14 @@ assert.equal(snapshot.totals.attempts, 1);
 assert.equal(snapshot.totals.operationsWithAttemptTelemetry, 1);
 assert.equal(snapshot.totals.succeeded, 1);
 assert.equal(snapshot.totals.successRate, 1);
+assert.deepEqual(snapshot.coverage.operationAcceptance, { observed: 1, total: 1, ratio: 1 });
+assert.deepEqual(snapshot.coverage.operationCompletion, { observed: 1, total: 1, ratio: 1 });
+assert.deepEqual(snapshot.coverage.providerAttempts, { observed: 1, total: 1, ratio: 1 });
+assert.deepEqual(snapshot.coverage.attemptLifecycle, { observed: 0, total: 1, ratio: 0 });
+assert.deepEqual(snapshot.coverage.failureClassification, { observed: 0, total: 0, ratio: null });
+assert.deepEqual(snapshot.coverage.failureCodes, { observed: 0, total: 0, ratio: null });
+assert.deepEqual(snapshot.coverage.costEvidence, { observed: 1, total: 1, ratio: 1 });
+assert.deepEqual(snapshot.failureBreakdown, []);
 assert.equal(snapshot.providers[0].providerKey, attemptTerminal.data.route.providerKey);
 assert.equal(snapshot.providers[0].p95DurationMs, attemptTerminal.data.metrics.durationMs);
 assert.equal(snapshot.timeline.length, 24);
@@ -119,6 +127,22 @@ const failedSnapshot = buildSignalOpsOpsSnapshotV1({
 });
 assert.equal(failedSnapshot.totals.failed, 1);
 assert.equal(failedSnapshot.totals.operationsWithAttemptTelemetry, 0);
+assert.deepEqual(failedSnapshot.coverage.failureClassification, {
+  observed: 1,
+  total: 1,
+  ratio: 1,
+});
+assert.deepEqual(failedSnapshot.coverage.failureCodes, {
+  observed: 1,
+  total: 1,
+  ratio: 1,
+});
+assert.deepEqual(failedSnapshot.failureBreakdown, [{
+  category: failedTerminal.data.outcome.failure.category,
+  responsibility: failedTerminal.data.outcome.failure.responsibility,
+  operations: 1,
+  retryableOperations: 1,
+}]);
 assert.deepEqual(
   failedSnapshot.recentFailedOperations.map((operation) => ({
     operationId: operation.operationId,

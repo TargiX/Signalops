@@ -3,6 +3,7 @@ import type {
   SignalOpsCostSourceV1,
   SignalOpsEventV1,
   SignalOpsFailureCategoryV1,
+  SignalOpsFailureResponsibilityV1,
   SignalOpsTerminalStatusV1,
 } from "./types.ts";
 
@@ -101,6 +102,19 @@ export type SignalOpsModelSnapshotV1 = {
   p95DurationMs: number | null;
 };
 
+export type SignalOpsCoverageMetricV1 = {
+  observed: number;
+  total: number;
+  ratio: number | null;
+};
+
+export type SignalOpsFailureSnapshotV1 = {
+  category: SignalOpsFailureCategoryV1;
+  responsibility: SignalOpsFailureResponsibilityV1;
+  operations: number;
+  retryableOperations: number;
+};
+
 export type SignalOpsProjectionPolicyV1 = {
   version: string;
   providerWindowMinutes: number;
@@ -150,10 +164,20 @@ export type SignalOpsOpsSnapshotV1 = {
     operationsWithAttemptTelemetry: number;
     costByCurrency: SignalOpsCurrencyCostV1[];
   };
+  coverage: {
+    operationAcceptance: SignalOpsCoverageMetricV1;
+    operationCompletion: SignalOpsCoverageMetricV1;
+    providerAttempts: SignalOpsCoverageMetricV1;
+    attemptLifecycle: SignalOpsCoverageMetricV1;
+    failureClassification: SignalOpsCoverageMetricV1;
+    failureCodes: SignalOpsCoverageMetricV1;
+    costEvidence: SignalOpsCoverageMetricV1;
+  };
   environments: string[];
   timeline: SignalOpsTimelineBucketV1[];
   providers: SignalOpsProviderSnapshotV1[];
   models: SignalOpsModelSnapshotV1[];
+  failureBreakdown: SignalOpsFailureSnapshotV1[];
   recentOperations: SignalOpsOperationSnapshotV1[];
   recentFailedOperations: SignalOpsOperationSnapshotV1[];
 };
@@ -293,6 +317,10 @@ function costRows(costs: Map<string, SignalOpsCostTotalsV1>): SignalOpsCurrencyC
   return [...costs.entries()]
     .map(([currency, totals]) => ({ currency, ...totals }))
     .sort((left, right) => left.currency.localeCompare(right.currency));
+}
+
+function coverageMetric(observed: number, total: number): SignalOpsCoverageMetricV1 {
+  return { observed, total, ratio: total === 0 ? null : observed / total };
 }
 
 function compareRecords(left: StoredSignalOpsEventV1, right: StoredSignalOpsEventV1): number {
@@ -452,7 +480,11 @@ export function buildSignalOpsOpsSnapshotV1(input: {
   const totalCosts = new Map<string, SignalOpsCostTotalsV1>();
   const timelineState = createTimelineV1(input.range, now);
   const modelAccumulators = new Map<string, ModelAccumulatorV1>();
+  const failureAccumulators = new Map<string, SignalOpsFailureSnapshotV1>();
   let includedAttempts = 0;
+  let pairedAttempts = 0;
+  let terminalAttempts = 0;
+  let costedTerminalAttempts = 0;
   let retryableFailures = 0;
   for (const attempt of attempts.values()) {
     const event = attempt.terminal;
@@ -462,8 +494,10 @@ export function buildSignalOpsOpsSnapshotV1(input: {
     );
     if (!bucket) continue;
     includedAttempts += 1;
+    if (attempt.started && attempt.terminal) pairedAttempts += 1;
     bucket.attempts += 1;
     if (!event) continue;
+    terminalAttempts += 1;
     const providerId = `${event.data.route.providerKey}:${event.data.route.modelKey}`;
     const row = providerRows.get(providerId) ?? {
       providerKey: event.data.route.providerKey,
@@ -492,6 +526,7 @@ export function buildSignalOpsOpsSnapshotV1(input: {
       event.data.metrics?.durationMs ?? durationBetween(attempt.started?.time, event.time);
     if (durationMs !== null) row.durations.push(durationMs);
     if (event.data.cost) {
+      costedTerminalAttempts += 1;
       addCost(row.costs, event.data.cost.currency, event.data.cost.source, event.data.cost.amount);
       addCost(totalCosts, event.data.cost.currency, event.data.cost.source, event.data.cost.amount);
       addCost(
@@ -557,6 +592,9 @@ export function buildSignalOpsOpsSnapshotV1(input: {
 
   let succeededOperations = 0;
   let failedOperations = 0;
+  let acceptedOperations = 0;
+  let classifiedOperationFailures = 0;
+  let codedOperationFailures = 0;
   let operationsWithAttemptTelemetry = 0;
   const operationDurations: number[] = [];
   const recentOperations = [...operations.entries()]
@@ -573,6 +611,7 @@ export function buildSignalOpsOpsSnapshotV1(input: {
         state.accepted?.time ?? state.source?.time ?? event.time,
       );
       if (!operationBucket) return [];
+      if (state.accepted) acceptedOperations += 1;
       if (state.attempts.size > 0) operationsWithAttemptTelemetry += 1;
       if (terminal?.data.outcome.status === "succeeded") succeededOperations += 1;
       else if (terminal) failedOperations += 1;
@@ -602,6 +641,22 @@ export function buildSignalOpsOpsSnapshotV1(input: {
         terminal && terminal.data.outcome.status !== "succeeded"
           ? terminal.data.outcome.failure
           : undefined;
+      if (terminal && terminal.data.outcome.status !== "succeeded") {
+        const category = failure?.category ?? "unknown";
+        const responsibility = failure?.responsibility ?? "unknown";
+        if (category !== "unknown") classifiedOperationFailures += 1;
+        if (failure?.code) codedOperationFailures += 1;
+        const failureKey = `${category}\u0000${responsibility}`;
+        const failureRow = failureAccumulators.get(failureKey) ?? {
+          category,
+          responsibility,
+          operations: 0,
+          retryableOperations: 0,
+        };
+        failureRow.operations += 1;
+        if (failure?.retryable) failureRow.retryableOperations += 1;
+        failureAccumulators.set(failureKey, failureRow);
+      }
 
       return [{
         operationId,
@@ -658,6 +713,12 @@ export function buildSignalOpsOpsSnapshotV1(input: {
         right.operations - left.operations ||
         left.modelKey.localeCompare(right.modelKey),
     );
+  const failureBreakdown = [...failureAccumulators.values()].sort(
+    (left, right) =>
+      right.operations - left.operations ||
+      left.category.localeCompare(right.category) ||
+      left.responsibility.localeCompare(right.responsibility),
+  );
 
   return {
     tenant: { id: input.tenantId, name: input.tenantName ?? input.tenantId },
@@ -693,10 +754,26 @@ export function buildSignalOpsOpsSnapshotV1(input: {
       operationsWithAttemptTelemetry,
       costByCurrency: costRows(totalCosts),
     },
+    coverage: {
+      operationAcceptance: coverageMetric(acceptedOperations, recentOperations.length),
+      operationCompletion: coverageMetric(terminalOperations, recentOperations.length),
+      providerAttempts: coverageMetric(
+        operationsWithAttemptTelemetry,
+        recentOperations.length,
+      ),
+      attemptLifecycle: coverageMetric(pairedAttempts, includedAttempts),
+      failureClassification: coverageMetric(
+        classifiedOperationFailures,
+        failedOperations,
+      ),
+      failureCodes: coverageMetric(codedOperationFailures, failedOperations),
+      costEvidence: coverageMetric(costedTerminalAttempts, terminalAttempts),
+    },
     environments: [...environments].sort(),
     timeline,
     providers,
     models,
+    failureBreakdown,
     recentOperations: recentOperations.slice(0, 50),
     recentFailedOperations: recentOperations
       .filter((operation) => operation.status !== "succeeded" && operation.status !== "running")
