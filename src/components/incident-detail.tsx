@@ -25,6 +25,10 @@ import {
 } from "@/lib/incident-handoff";
 import { buildProviderEscalation } from "@/lib/provider-escalation";
 import {
+  captureProductEvent,
+  captureProductException,
+} from "@/lib/product-analytics";
+import {
   fetchOpsSnapshot,
   type Generation,
   type GenerationStatus,
@@ -419,7 +423,16 @@ export function IncidentDetail({ incidentId }: { incidentId: string }) {
             </div>
 
             <button
-              onClick={() => setSimulatedRuleKey(draftRuleKey)}
+              onClick={() => {
+                setSimulatedRuleKey(draftRuleKey);
+                captureProductEvent("incident_rule_simulated", {
+                  incident_id: incident.id,
+                  provider_id: provider.id,
+                  guard: decisionGuard,
+                  traffic_share: decisionTrafficShare,
+                  moved_jobs: decisionProjection.movedJobs,
+                });
+              }}
               disabled={decisionComplete}
               className={cn(
                 "mt-4 inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg border text-sm font-medium shadow-[var(--shadow-1)]",
@@ -576,13 +589,17 @@ function IncidentHandoff({
 
     try {
       await navigator.clipboard.writeText(copiedContent);
+      captureProductEvent("incident_handoff_copied", {
+        decision_state: decisionState,
+      });
 
       if (copyAttempt.current !== attempt) {
         return;
       }
 
       setCopyState({ status: "copied", content: copiedContent });
-    } catch {
+    } catch (error) {
+      captureProductException(error, { flow: "copy_incident_handoff" });
       if (copyAttempt.current !== attempt) {
         return;
       }
@@ -725,13 +742,18 @@ function ProviderEscalation({
 
     try {
       await navigator.clipboard.writeText(copiedContent);
+      captureProductEvent("provider_escalation_copied", {
+        provider_name: providerName,
+        decision_state: decisionState,
+      });
 
       if (copyAttempt.current !== attempt) {
         return;
       }
 
       setCopyState({ status: "copied", content: copiedContent });
-    } catch {
+    } catch (error) {
+      captureProductException(error, { flow: "copy_provider_escalation" });
       if (copyAttempt.current !== attempt) {
         return;
       }
