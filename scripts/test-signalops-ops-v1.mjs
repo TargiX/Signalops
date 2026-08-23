@@ -61,6 +61,7 @@ assert.equal(snapshot.tenant.name, "Phosphene");
 assert.equal(snapshot.totals.events, 3);
 assert.equal(snapshot.totals.operations, 1);
 assert.equal(snapshot.totals.attempts, 1);
+assert.equal(snapshot.totals.operationsWithAttemptTelemetry, 1);
 assert.equal(snapshot.totals.succeeded, 1);
 assert.equal(snapshot.totals.successRate, 1);
 assert.equal(snapshot.providers[0].providerKey, attemptTerminal.data.route.providerKey);
@@ -99,7 +100,41 @@ assert.deepEqual(snapshot.models, [
   },
 ]);
 assert.equal(snapshot.recentOperations[0].status, operationTerminal.data.outcome.status);
+assert.deepEqual(snapshot.recentFailedOperations, []);
 assert.equal(snapshot.freshness.lastReceivedAt, receivedAt);
+
+const failedTerminal = await fixture("operation-terminal");
+failedTerminal.data.operation = structuredClone(accepted.data.operation);
+failedTerminal.subject = accepted.subject;
+const failedSnapshot = buildSignalOpsOpsSnapshotV1({
+  tenantId,
+  range: "24h",
+  now: new Date("2026-08-23T12:00:00.000Z"),
+  records: [accepted, failedTerminal].map((event, index) => ({
+    tenantId,
+    event,
+    payloadDigest: `failed-${index}`,
+    receivedAt,
+  })),
+});
+assert.equal(failedSnapshot.totals.failed, 1);
+assert.equal(failedSnapshot.totals.operationsWithAttemptTelemetry, 0);
+assert.deepEqual(
+  failedSnapshot.recentFailedOperations.map((operation) => ({
+    operationId: operation.operationId,
+    status: operation.status,
+    failureCategory: operation.failureCategory,
+    failureCode: operation.failureCode,
+    failureRetryable: operation.failureRetryable,
+  })),
+  [{
+    operationId: accepted.data.operation.id,
+    status: "failed",
+    failureCategory: failedTerminal.data.outcome.failure.category,
+    failureCode: failedTerminal.data.outcome.failure.code,
+    failureRetryable: failedTerminal.data.outcome.failure.retryable,
+  }],
+);
 
 for (const [range, expectedBuckets] of [
   ["7d", 28],
@@ -147,11 +182,13 @@ assert.equal(boundarySnapshot.timeline[0].start, rangeBoundary);
 assert.equal(boundarySnapshot.totals.events, 2);
 assert.equal(boundarySnapshot.totals.operations, 0);
 assert.equal(boundarySnapshot.totals.attempts, 0);
+assert.equal(boundarySnapshot.totals.operationsWithAttemptTelemetry, 0);
 assert.equal(boundarySnapshot.totals.succeeded, 0);
 assert.deepEqual(boundarySnapshot.totals.costByCurrency, []);
 assert.deepEqual(boundarySnapshot.providers, []);
 assert.deepEqual(boundarySnapshot.models, []);
 assert.deepEqual(boundarySnapshot.recentOperations, []);
+assert.deepEqual(boundarySnapshot.recentFailedOperations, []);
 assert.ok(
   boundarySnapshot.timeline.every(
     (bucket) =>

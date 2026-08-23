@@ -4,6 +4,8 @@ import {
   Activity,
   ArrowRight,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   Clock3,
   Database,
   DollarSign,
@@ -13,7 +15,7 @@ import {
   ShieldCheck,
   TriangleAlert,
 } from "lucide-react";
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 import {
   LatencyChart,
@@ -25,6 +27,11 @@ import {
   type ChartTimeBucket,
 } from "@/components/charts";
 import type { SignalOpsIncidentV1 } from "@/lib/signalops/v1/incidents";
+import {
+  filterSignalOpsOperationsV1,
+  paginateSignalOpsRowsV1,
+  type SignalOpsOperationFilterV1,
+} from "@/lib/signalops/v1/cockpit-view";
 import type {
   SignalOpsCurrencyCostV1,
   SignalOpsOpsRangeV1,
@@ -67,6 +74,9 @@ const emptySession: SessionResponse = {
 };
 
 const chartColors = ["#3459df", "#24a17e", "#e6a23c", "#d24b63", "#7b61d1", "#168aad"];
+const MODEL_PAGE_SIZE = 5;
+const PROVIDER_PAGE_SIZE = 5;
+const OPERATION_PAGE_SIZE = 10;
 
 type SelectedChartCost = {
   currency: string;
@@ -210,6 +220,11 @@ export function LiveCockpit() {
   const [loginNotice, setLoginNotice] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [switchingTenant, setSwitchingTenant] = useState(false);
+  const [operationFilter, setOperationFilter] = useState<SignalOpsOperationFilterV1>("all");
+  const [operationPage, setOperationPage] = useState(1);
+  const [modelPage, setModelPage] = useState(1);
+  const [providerPage, setProviderPage] = useState(1);
+  const operationSectionRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
     try {
@@ -343,6 +358,15 @@ export function LiveCockpit() {
     setIncidents([]);
     setState("unauthorized");
     await load();
+  }
+
+  function activateOperationFilter(filter: SignalOpsOperationFilterV1) {
+    setOperationFilter(filter);
+    setOperationPage(1);
+    window.requestAnimationFrame(() => {
+      operationSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      operationSectionRef.current?.focus({ preventScroll: true });
+    });
   }
 
   if (state === "unauthorized") {
@@ -509,6 +533,46 @@ export function LiveCockpit() {
     : snapshot.totals.costByCurrency.length > 1
       ? "Multiple live currencies stay separate and are never summed"
       : "No reported or catalog-estimated cost in this window";
+  const runningOperations = Math.max(
+    0,
+    snapshot.totals.operations - snapshot.totals.succeeded - snapshot.totals.failed,
+  );
+  const attemptCoverage =
+    snapshot.totals.operations === 0
+      ? null
+      : snapshot.totals.operationsWithAttemptTelemetry / snapshot.totals.operations;
+  const operationSource =
+    operationFilter === "failed"
+      ? snapshot.recentFailedOperations
+      : snapshot.recentOperations;
+  const filteredOperations = filterSignalOpsOperationsV1(operationSource, operationFilter);
+  const operationPagination = paginateSignalOpsRowsV1(
+    filteredOperations,
+    operationPage,
+    OPERATION_PAGE_SIZE,
+  );
+  const modelPagination = paginateSignalOpsRowsV1(
+    snapshot.models,
+    modelPage,
+    MODEL_PAGE_SIZE,
+  );
+  const providerPagination = paginateSignalOpsRowsV1(
+    snapshot.providers,
+    providerPage,
+    PROVIDER_PAGE_SIZE,
+  );
+  const maxModelOperations = Math.max(
+    1,
+    ...snapshot.models.map((model) => model.operations),
+  );
+  const operationFilterTotal =
+    operationFilter === "all"
+      ? snapshot.totals.operations
+      : operationFilter === "succeeded"
+        ? snapshot.totals.succeeded
+        : operationFilter === "failed"
+          ? snapshot.totals.failed
+          : runningOperations;
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_78%_0%,rgba(52,89,223,0.10),transparent_28%),#f8faff] text-[var(--text)]">
       <div className="mx-auto w-full max-w-[1440px] px-5 py-6 sm:px-8 lg:px-10">
@@ -550,7 +614,7 @@ export function LiveCockpit() {
           </div>
           <div className="flex rounded-lg border border-[var(--border)] bg-white p-1 shadow-sm">
             {(["24h", "7d", "30d", "90d"] as const).map((value) => (
-              <button key={value} onClick={() => { setState("loading"); setRange(value); }} className={`rounded-md px-3 py-1.5 text-xs font-semibold ${range === value ? "bg-[var(--accent)] text-white" : "text-[var(--text-dim)] hover:text-[var(--text)]"}`}>{value}</button>
+              <button key={value} onClick={() => { setState("loading"); setOperationPage(1); setModelPage(1); setProviderPage(1); setRange(value); }} className={`rounded-md px-3 py-1.5 text-xs font-semibold ${range === value ? "bg-[var(--accent)] text-white" : "text-[var(--text-dim)] hover:text-[var(--text)]"}`}>{value}</button>
             ))}
           </div>
         </section>
@@ -563,11 +627,12 @@ export function LiveCockpit() {
           </section>
         ) : null}
 
-        <section className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
-          <Metric icon={Database} label="Operations" value={formatNumber(snapshot.totals.operations)} detail={`${formatNumber(snapshot.totals.attempts)} attempts`} />
-          <Metric icon={CheckCircle2} label="Success rate" value={formatPercent(snapshot.totals.successRate)} detail={`${formatNumber(snapshot.totals.failed)} failed`} />
+        <section className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+          <Metric icon={Database} label="Operations" value={formatNumber(snapshot.totals.operations)} detail="Inspect latest operations →" active={operationFilter === "all"} onClick={() => activateOperationFilter("all")} />
+          <Metric icon={CheckCircle2} label="Succeeded" value={formatNumber(snapshot.totals.succeeded)} detail={`${formatPercent(snapshot.totals.successRate)} success rate →`} tone="good" active={operationFilter === "succeeded"} onClick={() => activateOperationFilter("succeeded")} />
+          <Metric icon={TriangleAlert} label="Failed" value={formatNumber(snapshot.totals.failed)} detail={`${formatNumber(snapshot.totals.retryableFailures)} retryable · inspect →`} tone="bad" active={operationFilter === "failed"} onClick={() => activateOperationFilter("failed")} />
           <Metric icon={Clock3} label="Operation p95" value={formatDuration(snapshot.totals.p95DurationMs)} detail="terminal duration" />
-          <Metric icon={RefreshCw} label="Retry pressure" value={formatNumber(snapshot.totals.retryableFailures)} detail="retryable failures" />
+          <Metric icon={Activity} label="Provider coverage" value={formatPercent(attemptCoverage)} detail={`${formatNumber(snapshot.totals.operationsWithAttemptTelemetry)} / ${formatNumber(snapshot.totals.operations)} operations`} tone="warn" />
           <Metric icon={DollarSign} label="Reported cost" value={costSummary(snapshot.totals.costByCurrency, "reported")} detail={`${costSummary(snapshot.totals.costByCurrency, "estimated")} estimated`} />
         </section>
 
@@ -638,18 +703,47 @@ export function LiveCockpit() {
           </section>
         ) : null}
 
-        <section className="mt-6 grid gap-5 xl:grid-cols-2">
-          <Panel title="Provider route health" subtitle="Attempts, latency, outcome, and cost without customer data">
-            {snapshot.providers.length === 0 ? <EmptyState text="Provider attempts will appear after the source application delivers its first terminal attempt." /> : (
-              <div className="divide-y divide-[var(--border-soft)]">
-                {snapshot.providers.map((provider) => (
-                  <div key={`${provider.providerKey}:${provider.modelKey}`} className="grid gap-3 py-4 first:pt-0 last:pb-0 sm:grid-cols-[1fr_auto_auto] sm:items-center">
-                    <div><p className="text-sm font-semibold text-[var(--text-strong)]">{provider.providerVendor || provider.providerKey}</p><p className="mt-1 font-mono text-[10px] text-[var(--text-dim)]">{provider.providerKey} / {provider.modelKey}</p></div>
-                    <div className="grid grid-cols-3 gap-5 text-right"><Mini label="Attempts" value={formatNumber(provider.attempts)} /><Mini label="p95" value={formatDuration(provider.p95DurationMs)} /><Mini label="Success" value={formatPercent(provider.successRate)} /></div>
-                    <span className={`justify-self-start rounded-full px-2 py-1 text-[10px] font-bold ring-1 sm:justify-self-end ${healthTone(provider.health.status)}`}>{provider.health.status.replace("_", " ")}</span>
-                  </div>
-                ))}
+        <section className="mt-6 grid items-start gap-5 lg:grid-cols-2">
+          <Panel
+            title="Provider route health"
+            subtitle={`${formatNumber(snapshot.totals.operationsWithAttemptTelemetry)} of ${formatNumber(snapshot.totals.operations)} operations include explicit attempt telemetry`}
+          >
+            <div className="mb-5 rounded-lg border border-amber-200 bg-amber-50/70 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-xs font-semibold text-amber-950">Attempt telemetry coverage</p>
+                <p className="font-mono text-xs font-bold text-amber-900">{formatPercent(attemptCoverage)}</p>
               </div>
+              <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-amber-100 ring-1 ring-amber-200">
+                <div
+                  className="h-full rounded-full bg-amber-500"
+                  style={{ width: `${Math.max(0, Math.min(100, (attemptCoverage ?? 0) * 100))}%` }}
+                />
+              </div>
+              <p className="mt-3 text-[10px] leading-4 text-amber-900/80">
+                Route health uses explicit attempt start and terminal facts only. Logical model names are never guessed into provider routes.
+              </p>
+            </div>
+            {snapshot.providers.length === 0 ? <EmptyState text="Provider attempts will appear after the source application delivers its first terminal attempt." /> : (
+              <>
+                <div className="divide-y divide-[var(--border-soft)]">
+                  {providerPagination.rows.map((provider) => (
+                    <div key={`${provider.providerKey}:${provider.modelKey}`} className="grid gap-3 py-4 first:pt-0 last:pb-0 sm:grid-cols-[1fr_auto_auto] sm:items-center">
+                      <div><p className="text-sm font-semibold text-[var(--text-strong)]">{provider.providerVendor || provider.providerKey}</p><p className="mt-1 font-mono text-[10px] text-[var(--text-dim)]">{provider.providerKey} / {provider.modelKey}</p></div>
+                      <div className="grid grid-cols-3 gap-5 text-right"><Mini label="Attempts" value={formatNumber(provider.attempts)} /><Mini label="p95" value={formatDuration(provider.p95DurationMs)} /><Mini label="Success" value={formatPercent(provider.successRate)} /></div>
+                      <span className={`justify-self-start rounded-full px-2 py-1 text-[10px] font-bold ring-1 sm:justify-self-end ${healthTone(provider.health.status)}`}>{provider.health.status.replace("_", " ")}</span>
+                    </div>
+                  ))}
+                </div>
+                <Pagination
+                  ariaLabel="Provider route pagination"
+                  itemLabel="routes"
+                  page={providerPagination.page}
+                  pageCount={providerPagination.pageCount}
+                  pageSize={PROVIDER_PAGE_SIZE}
+                  total={providerPagination.total}
+                  onPageChange={setProviderPage}
+                />
+              </>
             )}
           </Panel>
 
@@ -657,8 +751,9 @@ export function LiveCockpit() {
             {snapshot.models.length === 0 ? (
               <EmptyState text="Model performance appears after the source application sends an operation." />
             ) : (
-              <div className="divide-y divide-[var(--border-soft)]">
-                {snapshot.models.map((model) => (
+              <>
+                <div className="divide-y divide-[var(--border-soft)]">
+                {modelPagination.rows.map((model) => (
                   <div
                     key={model.modelKey}
                     className="grid gap-3 py-4 first:pt-0 last:pb-0 sm:grid-cols-[1fr_auto] sm:items-center"
@@ -670,6 +765,9 @@ export function LiveCockpit() {
                       <p className="mt-1 text-[10px] text-[var(--text-dim)]">
                         {formatNumber(model.succeeded)} succeeded · {formatNumber(model.failed)} failed
                       </p>
+                      <div className="mt-2 h-1 overflow-hidden rounded-full bg-slate-100">
+                        <div className="h-full rounded-full bg-[var(--accent)]" style={{ width: `${Math.max(3, (model.operations / maxModelOperations) * 100)}%` }} />
+                      </div>
                     </div>
                     <div className="grid grid-cols-3 gap-5 text-right">
                       <Mini label="Operations" value={formatNumber(model.operations)} />
@@ -678,23 +776,67 @@ export function LiveCockpit() {
                     </div>
                   </div>
                 ))}
-              </div>
+                </div>
+                <Pagination
+                  ariaLabel="Model performance pagination"
+                  itemLabel="models"
+                  page={modelPagination.page}
+                  pageCount={modelPagination.pageCount}
+                  pageSize={MODEL_PAGE_SIZE}
+                  total={modelPagination.total}
+                  onPageChange={setModelPage}
+                />
+              </>
             )}
           </Panel>
 
-          <div className="xl:col-span-2">
-            <Panel title="Recent operations" subtitle="Opaque operation IDs only; no prompt, media URL, email, or user identifier">
-              {snapshot.recentOperations.length === 0 ? <EmptyState text="The pipeline is connected. Trigger an AI operation in the source application to populate this table." /> : (
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[720px] text-left">
-                    <thead><tr className="border-b border-[var(--border)] font-mono text-[9px] uppercase tracking-[0.08em] text-[var(--mute)]"><th className="pb-3 font-semibold">Operation</th><th className="pb-3 font-semibold">Status</th><th className="pb-3 font-semibold">Model class</th><th className="pb-3 font-semibold">Duration</th><th className="pb-3 font-semibold">Attempts</th><th className="pb-3 text-right font-semibold">Seen</th></tr></thead>
-                    <tbody className="divide-y divide-[var(--border-soft)]">
-                      {snapshot.recentOperations.map((operation) => (
-                        <tr key={operation.operationId} className="text-xs"><td className="py-3.5"><p className="max-w-[180px] truncate font-mono text-[10px] font-semibold text-[var(--text-strong)]">{operation.operationId}</p><p className="mt-1 text-[10px] text-[var(--text-dim)]">{operation.service} · {operation.environment}</p></td><td className="py-3.5"><span className={`rounded-full px-2 py-1 text-[10px] font-bold ring-1 ${statusTone(operation.status)}`}>{operation.status}</span></td><td className="py-3.5 text-[var(--text-dim)]">{operation.logicalModelKey || operation.kind}</td><td className="py-3.5 font-medium">{formatDuration(operation.durationMs)}</td><td className="py-3.5 font-medium">{formatNumber(operation.attemptCount)}</td><td className="py-3.5 text-right text-[var(--text-dim)]">{relativeTime(operation.occurredAt)}</td></tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+          <div ref={operationSectionRef} tabIndex={-1} className="scroll-mt-6 outline-none lg:col-span-2">
+            <Panel
+              title="Operations explorer"
+              subtitle={`${formatNumber(operationPagination.total)} available of ${formatNumber(operationFilterTotal)} ${operationFilter === "all" ? "operations" : `${operationFilter} outcomes`} in this range · identifiers only`}
+            >
+              <div className="mb-5 flex flex-wrap gap-2" aria-label="Operation status filter">
+                <FilterChip label="All" count={snapshot.totals.operations} active={operationFilter === "all"} onClick={() => activateOperationFilter("all")} />
+                <FilterChip label="Succeeded" count={snapshot.totals.succeeded} active={operationFilter === "succeeded"} tone="good" onClick={() => activateOperationFilter("succeeded")} />
+                <FilterChip label="Failed" count={snapshot.totals.failed} active={operationFilter === "failed"} tone="bad" onClick={() => activateOperationFilter("failed")} />
+                <FilterChip label="Running" count={runningOperations} active={operationFilter === "running"} onClick={() => activateOperationFilter("running")} />
+              </div>
+              {operationPagination.rows.length === 0 ? (
+                <EmptyState text={operationFilter === "all" ? "The pipeline is connected. Trigger an AI operation in the source application to populate this table." : `No ${operationFilter} operations are available in the retained sample for this range.`} />
+              ) : (
+                <>
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[900px] text-left">
+                      <thead><tr className="border-b border-[var(--border)] font-mono text-[9px] uppercase tracking-[0.08em] text-[var(--mute)]"><th className="pb-3 font-semibold">Operation</th><th className="pb-3 font-semibold">Status</th><th className="pb-3 font-semibold">Model class</th><th className="pb-3 font-semibold">Failure</th><th className="pb-3 font-semibold">Duration</th><th className="pb-3 font-semibold">Attempts</th><th className="pb-3 text-right font-semibold">Seen</th></tr></thead>
+                      <tbody className="divide-y divide-[var(--border-soft)]">
+                        {operationPagination.rows.map((operation) => (
+                          <tr key={operation.operationId} className="text-xs">
+                            <td className="py-3.5"><p className="max-w-[180px] truncate font-mono text-[10px] font-semibold text-[var(--text-strong)]">{operation.operationId}</p><p className="mt-1 text-[10px] text-[var(--text-dim)]">{operation.service} · {operation.environment}</p></td>
+                            <td className="py-3.5"><span className={`rounded-full px-2 py-1 text-[10px] font-bold ring-1 ${statusTone(operation.status)}`}>{operation.status}</span></td>
+                            <td className="max-w-[180px] py-3.5 text-[var(--text-dim)]"><span className="block truncate" title={operation.logicalModelKey || operation.kind}>{operation.logicalModelKey || operation.kind}</span></td>
+                            <td className="py-3.5">
+                              {operation.status === "succeeded" || operation.status === "running" ? <span className="text-[var(--mute)]">—</span> : (
+                                <div><p className="font-medium text-rose-700">{operation.failureCategory?.replaceAll("_", " ") || "unclassified"}</p><p className="mt-1 max-w-[180px] truncate font-mono text-[9px] text-[var(--mute)]" title={operation.failureCode}>{operation.failureCode || (operation.failureRetryable ? "retryable" : "no failure code")}</p></div>
+                              )}
+                            </td>
+                            <td className="py-3.5 font-medium">{formatDuration(operation.durationMs)}</td>
+                            <td className="py-3.5 font-medium">{formatNumber(operation.attemptCount)}</td>
+                            <td className="py-3.5 text-right text-[var(--text-dim)]">{relativeTime(operation.occurredAt)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <Pagination
+                    ariaLabel="Operations pagination"
+                    itemLabel="operations"
+                    page={operationPagination.page}
+                    pageCount={operationPagination.pageCount}
+                    pageSize={OPERATION_PAGE_SIZE}
+                    total={operationPagination.total}
+                    onPageChange={setOperationPage}
+                  />
+                </>
               )}
             </Panel>
           </div>
@@ -705,8 +847,17 @@ export function LiveCockpit() {
   );
 }
 
-function Metric({ icon: Icon, label, value, detail }: { icon: typeof Activity; label: string; value: string; detail: string }) {
-  return <div className="min-w-0 rounded-xl border border-[var(--border)] bg-white p-4 shadow-[var(--shadow-1)]"><div className="flex items-center justify-between"><p className="font-mono text-[9px] font-bold uppercase tracking-[0.08em] text-[var(--mute)]">{label}</p><Icon className="size-4 text-[var(--accent)]" /></div><p className="mt-4 truncate text-2xl font-semibold tracking-tight text-[var(--text-strong)]" title={value}>{value}</p><p className="mt-1 truncate text-[10px] text-[var(--text-dim)]" title={detail}>{detail}</p></div>;
+function Metric({ icon: Icon, label, value, detail, onClick, active = false, tone = "neutral" }: { icon: typeof Activity; label: string; value: string; detail: string; onClick?: () => void; active?: boolean; tone?: "neutral" | "good" | "bad" | "warn" }) {
+  const toneClass = tone === "good"
+    ? "text-emerald-600"
+    : tone === "bad"
+      ? "text-rose-600"
+      : tone === "warn"
+        ? "text-amber-600"
+        : "text-[var(--accent)]";
+  const className = `min-w-0 rounded-xl border bg-white p-4 text-left shadow-[var(--shadow-1)] transition ${active ? "border-[var(--accent)] ring-2 ring-[var(--accent-soft)]" : "border-[var(--border)]"} ${onClick ? "cursor-pointer hover:-translate-y-0.5 hover:border-[var(--accent)] hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]" : ""}`;
+  const content = <><div className="flex items-center justify-between"><p className="font-mono text-[9px] font-bold uppercase tracking-[0.08em] text-[var(--mute)]">{label}</p><Icon className={`size-4 ${toneClass}`} /></div><p className="mt-4 truncate text-2xl font-semibold tracking-tight text-[var(--text-strong)]" title={value}>{value}</p><p className="mt-1 truncate text-[10px] text-[var(--text-dim)]" title={detail}>{detail}</p></>;
+  return onClick ? <button type="button" aria-pressed={active} className={className} onClick={onClick}>{content}</button> : <div className={className}>{content}</div>;
 }
 
 function Panel({ title, subtitle, children }: { title: string; subtitle: string; children: React.ReactNode }) {
@@ -715,6 +866,31 @@ function Panel({ title, subtitle, children }: { title: string; subtitle: string;
 
 function Mini({ label, value }: { label: string; value: string }) {
   return <div><p className="font-mono text-[8px] uppercase text-[var(--mute)]">{label}</p><p className="mt-1 text-xs font-semibold text-[var(--text-strong)]">{value}</p></div>;
+}
+
+function FilterChip({ label, count, active, onClick, tone = "neutral" }: { label: string; count: number; active: boolean; onClick: () => void; tone?: "neutral" | "good" | "bad" }) {
+  const activeClass = tone === "bad"
+    ? "border-rose-600 bg-rose-600 text-white"
+    : tone === "good"
+      ? "border-emerald-600 bg-emerald-600 text-white"
+      : "border-[var(--accent)] bg-[var(--accent)] text-white";
+  return <button type="button" aria-pressed={active} onClick={onClick} className={`rounded-full border px-3 py-1.5 text-[10px] font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] ${active ? activeClass : "border-[var(--border)] bg-white text-[var(--text-dim)] hover:border-[var(--accent)] hover:text-[var(--accent)]"}`}>{label} <span className="ml-1 font-mono opacity-80">{formatNumber(count)}</span></button>;
+}
+
+function Pagination({ ariaLabel, itemLabel, page, pageCount, pageSize, total, onPageChange }: { ariaLabel: string; itemLabel: string; page: number; pageCount: number; pageSize: number; total: number; onPageChange: (page: number) => void }) {
+  if (total === 0) return null;
+  const first = (page - 1) * pageSize + 1;
+  const last = Math.min(total, page * pageSize);
+  return (
+    <nav aria-label={ariaLabel} className="mt-5 flex items-center justify-between gap-3 border-t border-[var(--border-soft)] pt-4">
+      <p className="font-mono text-[9px] text-[var(--mute)]">{first}–{last} of {formatNumber(total)} {itemLabel}</p>
+      <div className="flex items-center gap-2">
+        <button type="button" aria-label={`Previous ${itemLabel} page`} disabled={page <= 1} onClick={() => onPageChange(page - 1)} className="grid size-8 place-items-center rounded-lg border border-[var(--border)] bg-white text-[var(--text-dim)] transition hover:border-[var(--accent)] hover:text-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-35"><ChevronLeft className="size-4" /></button>
+        <span className="min-w-14 text-center font-mono text-[9px] font-semibold text-[var(--text-dim)]">{page} / {pageCount}</span>
+        <button type="button" aria-label={`Next ${itemLabel} page`} disabled={page >= pageCount} onClick={() => onPageChange(page + 1)} className="grid size-8 place-items-center rounded-lg border border-[var(--border)] bg-white text-[var(--text-dim)] transition hover:border-[var(--accent)] hover:text-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-35"><ChevronRight className="size-4" /></button>
+      </div>
+    </nav>
+  );
 }
 
 function EmptyState({ text }: { text: string }) {

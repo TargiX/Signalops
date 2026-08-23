@@ -8,6 +8,7 @@ const [
   chartSource,
   snapshotSource,
   projectionSource,
+  cockpitViewSource,
 ] = await Promise.all([
   readFile(new URL("../src/app/cockpit/page.tsx", import.meta.url), "utf8"),
   readFile(new URL("../src/components/live-cockpit.tsx", import.meta.url), "utf8"),
@@ -16,6 +17,10 @@ const [
   readFile(new URL("../src/lib/signalops/v1/ops-snapshot.ts", import.meta.url), "utf8"),
   readFile(
     new URL("../src/lib/signalops/v1/projection-repository.ts", import.meta.url),
+    "utf8",
+  ),
+  readFile(
+    new URL("../src/lib/signalops/v1/cockpit-view.ts", import.meta.url),
     "utf8",
   ),
 ]);
@@ -47,6 +52,8 @@ assert.match(snapshotSource, /timeline: SignalOpsTimelineBucketV1\[\]/);
 assert.match(snapshotSource, /models: SignalOpsModelSnapshotV1\[\]/);
 assert.match(projectionSource, /Array\.isArray\(row\.snapshot\?\.timeline\)/);
 assert.match(projectionSource, /Array\.isArray\(row\.snapshot\?\.models\)/);
+assert.match(projectionSource, /Array\.isArray\(row\.snapshot\?\.recentFailedOperations\)/);
+assert.match(projectionSource, /operationsWithAttemptTelemetry/);
 assert.match(liveSource, /insufficient live provider data/i);
 assert.match(
   liveSource,
@@ -67,6 +74,50 @@ assert.doesNotMatch(
   liveSource,
   /Phosphene|customer email|Apply routing rule/i,
   "The reusable live cockpit must not hard-code its first tenant or demo-only controls.",
+);
+assert.match(liveSource, /const MODEL_PAGE_SIZE = 5/);
+assert.match(liveSource, /const OPERATION_PAGE_SIZE = 10/);
+assert.match(
+  liveSource,
+  /activateOperationFilter\("failed"\)/,
+  "The failure KPI must open a real failed-operations view.",
+);
+assert.match(liveSource, /snapshot\.recentFailedOperations/);
+assert.match(liveSource, /snapshot\.totals\.operationsWithAttemptTelemetry/);
+assert.match(
+  liveSource,
+  /grid[^"]*items-start[^"]*lg:grid-cols/,
+  "Provider and model panels must size to their own content instead of stretching together.",
+);
+assert.match(liveSource, /ariaLabel="Model performance pagination"/);
+assert.match(liveSource, /ariaLabel="Operations pagination"/);
+assert.match(cockpitViewSource, /export function filterSignalOpsOperationsV1/);
+assert.match(cockpitViewSource, /export function paginateSignalOpsRowsV1/);
+
+const {
+  filterSignalOpsOperationsV1,
+  paginateSignalOpsRowsV1,
+} = await import("../src/lib/signalops/v1/cockpit-view.ts");
+const operationRows = [
+  { operationId: "ok", status: "succeeded" },
+  { operationId: "bad", status: "failed" },
+  { operationId: "running", status: "running" },
+];
+assert.deepEqual(
+  filterSignalOpsOperationsV1(operationRows, "failed").map((row) => row.operationId),
+  ["bad"],
+);
+assert.deepEqual(
+  filterSignalOpsOperationsV1(operationRows, "all").map((row) => row.operationId),
+  ["ok", "bad", "running"],
+);
+assert.deepEqual(
+  paginateSignalOpsRowsV1(["a", "b", "c", "d", "e"], 2, 2),
+  { rows: ["c", "d"], page: 2, pageCount: 3, total: 5 },
+);
+assert.deepEqual(
+  paginateSignalOpsRowsV1(["a", "b", "c"], 99, 2),
+  { rows: ["c"], page: 2, pageCount: 2, total: 3 },
 );
 
 console.log("signalops live cockpit v1 checks passed");
