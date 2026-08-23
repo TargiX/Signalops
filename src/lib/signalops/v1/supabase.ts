@@ -143,6 +143,7 @@ export function createSupabaseSignalOpsEventStoreV1(
                 event_id: event.id,
                 event_type: event.type,
                 event_time: event.time,
+                subject: event.subject,
                 payload: event,
                 payload_digest: signalOpsEventDigestV1(event),
               })),
@@ -203,6 +204,26 @@ export function createSupabaseSignalOpsEventStoreV1(
         rows.push(...page);
         if (page.length < pageSize) break;
       }
+      return rows.map((row) => ({
+        tenantId: row.tenant_id,
+        event: row.payload,
+        payloadDigest: row.payload_digest,
+        receivedAt: row.received_at,
+      }));
+    },
+    async listBySubject(tenantId, subject, options = {}) {
+      const limit = Math.max(1, Math.min(options.limit ?? 1_000, 10_001));
+      const filters = new URLSearchParams({
+        select: "tenant_id,event_id,payload,payload_digest,received_at",
+        tenant_id: `eq.${tenantId}`,
+        subject: `eq.${subject}`,
+        order: "event_time.asc,received_at.asc,event_id.asc",
+        limit: String(limit),
+      });
+      const rows = await signalOpsSupabaseRestRequestV1<EventRow[]>(
+        config,
+        `signalops_v1_events?${filters}`,
+      );
       return rows.map((row) => ({
         tenantId: row.tenant_id,
         event: row.payload,

@@ -26,6 +26,7 @@ import {
   type ChartProvider,
   type ChartTimeBucket,
 } from "@/components/charts";
+import { OperationTraceDrawer } from "@/components/operation-trace-drawer";
 import type { SignalOpsIncidentV1 } from "@/lib/signalops/v1/incidents";
 import {
   filterSignalOpsOperationsV1,
@@ -34,6 +35,7 @@ import {
 } from "@/lib/signalops/v1/cockpit-view";
 import type {
   SignalOpsCurrencyCostV1,
+  SignalOpsCoverageMetricV1,
   SignalOpsOpsRangeV1,
   SignalOpsOpsSnapshotV1,
   SignalOpsProviderHealthV1,
@@ -224,7 +226,9 @@ export function LiveCockpit() {
   const [operationPage, setOperationPage] = useState(1);
   const [modelPage, setModelPage] = useState(1);
   const [providerPage, setProviderPage] = useState(1);
+  const [selectedOperationId, setSelectedOperationId] = useState<string | null>(null);
   const operationSectionRef = useRef<HTMLDivElement>(null);
+  const operationTraceTriggerRef = useRef<HTMLElement | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -336,6 +340,7 @@ export function LiveCockpit() {
   async function switchTenant(tenantId: string) {
     if (!tenantId || tenantId === snapshot?.tenant.id) return;
     setSwitchingTenant(true);
+    setSelectedOperationId(null);
     try {
       const response = await fetch("/api/cockpit/session", {
         method: "POST",
@@ -356,6 +361,7 @@ export function LiveCockpit() {
     await fetch("/api/cockpit/session", { method: "DELETE" });
     setSnapshot(null);
     setIncidents([]);
+    setSelectedOperationId(null);
     setState("unauthorized");
     await load();
   }
@@ -367,6 +373,11 @@ export function LiveCockpit() {
       operationSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
       operationSectionRef.current?.focus({ preventScroll: true });
     });
+  }
+
+  function openOperationTrace(operationId: string, trigger: HTMLElement) {
+    operationTraceTriggerRef.current = trigger;
+    setSelectedOperationId(operationId);
   }
 
   if (state === "unauthorized") {
@@ -565,6 +576,13 @@ export function LiveCockpit() {
     1,
     ...snapshot.models.map((model) => model.operations),
   );
+  const maxFailureOperations = Math.max(
+    1,
+    ...snapshot.failureBreakdown.map((failure) => failure.operations),
+  );
+  const unclassifiedFailures = snapshot.failureBreakdown
+    .filter((failure) => failure.category === "unknown")
+    .reduce((total, failure) => total + failure.operations, 0);
   const operationFilterTotal =
     operationFilter === "all"
       ? snapshot.totals.operations
@@ -574,6 +592,7 @@ export function LiveCockpit() {
           ? snapshot.totals.failed
           : runningOperations;
   return (
+    <>
     <main className="min-h-screen bg-[radial-gradient(circle_at_78%_0%,rgba(52,89,223,0.10),transparent_28%),#f8faff] text-[var(--text)]">
       <div className="mx-auto w-full max-w-[1440px] px-5 py-6 sm:px-8 lg:px-10">
         <header className="flex flex-wrap items-center justify-between gap-4 border-b border-[var(--border)] pb-5">
@@ -614,7 +633,7 @@ export function LiveCockpit() {
           </div>
           <div className="flex rounded-lg border border-[var(--border)] bg-white p-1 shadow-sm">
             {(["24h", "7d", "30d", "90d"] as const).map((value) => (
-              <button key={value} onClick={() => { setState("loading"); setOperationPage(1); setModelPage(1); setProviderPage(1); setRange(value); }} className={`rounded-md px-3 py-1.5 text-xs font-semibold ${range === value ? "bg-[var(--accent)] text-white" : "text-[var(--text-dim)] hover:text-[var(--text)]"}`}>{value}</button>
+              <button key={value} onClick={() => { setState("loading"); setSelectedOperationId(null); setOperationPage(1); setModelPage(1); setProviderPage(1); setRange(value); }} className={`rounded-md px-3 py-1.5 text-xs font-semibold ${range === value ? "bg-[var(--accent)] text-white" : "text-[var(--text-dim)] hover:text-[var(--text)]"}`}>{value}</button>
             ))}
           </div>
         </section>
@@ -703,6 +722,65 @@ export function LiveCockpit() {
           </section>
         ) : null}
 
+        <section className="mt-6 grid items-start gap-5 xl:grid-cols-[1.25fr_0.75fr]">
+          <Panel
+            title="Instrumentation quality"
+            subtitle="Measured canonical evidence coverage; missing facts are never inferred"
+          >
+            <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2">
+              <CoverageRow label="Accepted boundaries" metric={snapshot.coverage.operationAcceptance} />
+              <CoverageRow label="Terminal outcomes" metric={snapshot.coverage.operationCompletion} />
+              <CoverageRow label="Provider attempts" metric={snapshot.coverage.providerAttempts} />
+              <CoverageRow label="Paired attempt lifecycle" metric={snapshot.coverage.attemptLifecycle} />
+              <CoverageRow label="Failure taxonomy" metric={snapshot.coverage.failureClassification} />
+              <CoverageRow label="Failure codes" metric={snapshot.coverage.failureCodes} />
+              <CoverageRow label="Cost evidence" metric={snapshot.coverage.costEvidence} />
+            </div>
+            <p className="mt-5 rounded-lg border border-blue-100 bg-blue-50/70 px-3 py-2.5 text-[10px] leading-4 text-blue-900">
+              These ratios describe what producers actually emitted. Logical model labels do not count as provider-route evidence, and catalog prices do not count as reported billing.
+            </p>
+          </Panel>
+
+          <Panel
+            title="Failure intelligence"
+            subtitle={`${formatNumber(snapshot.totals.failed)} unsuccessful operation${snapshot.totals.failed === 1 ? "" : "s"} in this range`}
+          >
+            {snapshot.failureBreakdown.length === 0 ? (
+              <EmptyState text="Normalized failure categories appear after an operation records an unsuccessful terminal outcome." />
+            ) : (
+              <>
+                {unclassifiedFailures > 0 ? (
+                  <div className="mb-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900">
+                    <TriangleAlert className="mt-0.5 size-4 shrink-0" />
+                    <p className="text-[10px] leading-4">
+                      <span className="font-semibold">{formatNumber(unclassifiedFailures)} unclassified.</span> The source recorded failure outcomes without a normalized cause; inspect an operation to see the available evidence.
+                    </p>
+                  </div>
+                ) : null}
+                <div className="divide-y divide-[var(--border-soft)]">
+                  {snapshot.failureBreakdown.slice(0, 7).map((failure) => (
+                    <div key={`${failure.category}:${failure.responsibility}`} className="py-3 first:pt-0 last:pb-0">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-xs font-semibold text-[var(--text-strong)]">{failure.category.replaceAll("_", " ")}</p>
+                          <p className="mt-1 font-mono text-[9px] text-[var(--mute)]">{failure.responsibility} · {formatNumber(failure.retryableOperations)} retryable</p>
+                        </div>
+                        <span className="font-mono text-xs font-bold text-[var(--text-strong)]">{formatNumber(failure.operations)}</span>
+                      </div>
+                      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100">
+                        <div
+                          className={`h-full rounded-full ${failure.category === "unknown" ? "bg-amber-500" : "bg-rose-500"}`}
+                          style={{ width: `${Math.max(4, (failure.operations / maxFailureOperations) * 100)}%` }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </Panel>
+        </section>
+
         <section className="mt-6 grid items-start gap-5 lg:grid-cols-2">
           <Panel
             title="Provider route health"
@@ -790,7 +868,7 @@ export function LiveCockpit() {
             )}
           </Panel>
 
-          <div ref={operationSectionRef} tabIndex={-1} className="scroll-mt-6 outline-none lg:col-span-2">
+          <div ref={operationSectionRef} tabIndex={-1} className="min-w-0 scroll-mt-6 outline-none lg:col-span-2">
             <Panel
               title="Operations explorer"
               subtitle={`${formatNumber(operationPagination.total)} available of ${formatNumber(operationFilterTotal)} ${operationFilter === "all" ? "operations" : `${operationFilter} outcomes`} in this range · identifiers only`}
@@ -806,11 +884,11 @@ export function LiveCockpit() {
               ) : (
                 <>
                   <div className="overflow-x-auto">
-                    <table className="w-full min-w-[900px] text-left">
-                      <thead><tr className="border-b border-[var(--border)] font-mono text-[9px] uppercase tracking-[0.08em] text-[var(--mute)]"><th className="pb-3 font-semibold">Operation</th><th className="pb-3 font-semibold">Status</th><th className="pb-3 font-semibold">Model class</th><th className="pb-3 font-semibold">Failure</th><th className="pb-3 font-semibold">Duration</th><th className="pb-3 font-semibold">Attempts</th><th className="pb-3 text-right font-semibold">Seen</th></tr></thead>
+                    <table className="w-full min-w-[1020px] text-left">
+                      <thead><tr className="border-b border-[var(--border)] font-mono text-[9px] uppercase tracking-[0.08em] text-[var(--mute)]"><th className="pb-3 font-semibold">Operation</th><th className="pb-3 font-semibold">Status</th><th className="pb-3 font-semibold">Model class</th><th className="pb-3 font-semibold">Failure</th><th className="pb-3 font-semibold">Duration</th><th className="pb-3 font-semibold">Attempts</th><th className="pb-3 text-right font-semibold">Seen</th><th className="pb-3 text-right font-semibold">Trace</th></tr></thead>
                       <tbody className="divide-y divide-[var(--border-soft)]">
                         {operationPagination.rows.map((operation) => (
-                          <tr key={operation.operationId} className="text-xs">
+                          <tr key={operation.operationId} className="text-xs transition-colors hover:bg-[var(--surface-mute)]">
                             <td className="py-3.5"><p className="max-w-[180px] truncate font-mono text-[10px] font-semibold text-[var(--text-strong)]">{operation.operationId}</p><p className="mt-1 text-[10px] text-[var(--text-dim)]">{operation.service} · {operation.environment}</p></td>
                             <td className="py-3.5"><span className={`rounded-full px-2 py-1 text-[10px] font-bold ring-1 ${statusTone(operation.status)}`}>{operation.status}</span></td>
                             <td className="max-w-[180px] py-3.5 text-[var(--text-dim)]"><span className="block truncate" title={operation.logicalModelKey || operation.kind}>{operation.logicalModelKey || operation.kind}</span></td>
@@ -822,6 +900,16 @@ export function LiveCockpit() {
                             <td className="py-3.5 font-medium">{formatDuration(operation.durationMs)}</td>
                             <td className="py-3.5 font-medium">{formatNumber(operation.attemptCount)}</td>
                             <td className="py-3.5 text-right text-[var(--text-dim)]">{relativeTime(operation.occurredAt)}</td>
+                            <td className="py-3.5 text-right">
+                              <button
+                                type="button"
+                                aria-label={`Inspect operation ${operation.operationId}`}
+                                onClick={(event) => openOperationTrace(operation.operationId, event.currentTarget)}
+                                className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] bg-white px-2.5 py-1.5 text-[10px] font-semibold text-[var(--text-dim)] transition hover:border-[var(--accent)] hover:text-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                              >
+                                Inspect <ArrowRight className="size-3" />
+                              </button>
+                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -844,6 +932,14 @@ export function LiveCockpit() {
         <footer className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border)] py-5 text-[10px] text-[var(--mute)]"><span>Auto-refreshes every 10 seconds · {snapshot.projection.sourceEventCount} source events · snapshot generated {new Date(snapshot.generatedAt).toLocaleTimeString()}</span><a className="font-semibold hover:text-[var(--accent)]" href="/schemas/ai-telemetry/v1">Canonical schema</a></footer>
       </div>
     </main>
+    {selectedOperationId ? (
+      <OperationTraceDrawer
+        operationId={selectedOperationId}
+        onClose={() => setSelectedOperationId(null)}
+        finalFocus={operationTraceTriggerRef}
+      />
+    ) : null}
+    </>
   );
 }
 
@@ -866,6 +962,31 @@ function Panel({ title, subtitle, children }: { title: string; subtitle: string;
 
 function Mini({ label, value }: { label: string; value: string }) {
   return <div><p className="font-mono text-[8px] uppercase text-[var(--mute)]">{label}</p><p className="mt-1 text-xs font-semibold text-[var(--text-strong)]">{value}</p></div>;
+}
+
+function CoverageRow({ label, metric }: { label: string; metric: SignalOpsCoverageMetricV1 }) {
+  const tone = metric.ratio === null
+    ? "bg-slate-300"
+    : metric.ratio >= 0.95
+      ? "bg-emerald-500"
+      : metric.ratio >= 0.8
+        ? "bg-amber-500"
+        : "bg-rose-500";
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-[11px] font-semibold text-[var(--text-strong)]">{label}</p>
+        <p className="font-mono text-[10px] font-bold text-[var(--text-strong)]">{formatPercent(metric.ratio)}</p>
+      </div>
+      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100">
+        <div
+          className={`h-full rounded-full ${tone}`}
+          style={{ width: `${Math.max(0, Math.min(100, (metric.ratio ?? 0) * 100))}%` }}
+        />
+      </div>
+      <p className="mt-1.5 font-mono text-[9px] text-[var(--mute)]">{formatNumber(metric.observed)} / {formatNumber(metric.total)} observed</p>
+    </div>
+  );
 }
 
 function FilterChip({ label, count, active, onClick, tone = "neutral" }: { label: string; count: number; active: boolean; onClick: () => void; tone?: "neutral" | "good" | "bad" }) {
