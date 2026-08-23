@@ -17,6 +17,9 @@ change. Those remain separate operator decisions.
   `--actor-subject`. Mutations are written to `signalops_v1_audit_log`.
 - Tenant IDs, auth subjects, and credential IDs are always supplied explicitly. There is no
   "current tenant", first-row, wildcard, or all-tenants mutation default.
+- Set `SIGNALOPS_WORKSPACE_SLUG` explicitly in every production runtime that enables password
+  operator access, bootstrap ingest, readiness, or scheduled evaluation. The neutral `demo`
+  workspace fallback exists only outside production.
 - Serialize mutations for the same tenant. Do not run two bootstrap, membership, credential, or
   projection commands concurrently.
 - The service-role key bypasses RLS. Run the CLI only from an approved administrative workstation

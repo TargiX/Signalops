@@ -17,6 +17,7 @@
     "test:csv-download": "node scripts/test-csv-download.mjs",
     "test:consumer-guard-handoff": "node scripts/test-consumer-guard-handoff.mjs",
     "test:home-navigation": "node scripts/test-home-navigation.mjs",
+    "test:live-cockpit:v1": "node scripts/test-live-cockpit-v1.mjs",
     "test:contract:v1": "node scripts/test-signalops-contract-v1.mjs",
     "test:ops:v1": "node scripts/test-signalops-ops-v1.mjs",
     "test:auth:v1": "node scripts/test-signalops-auth-v1.mjs",
@@ -27,7 +28,7 @@
     "test:ingest": "node scripts/test-signalops-ingest.mjs",
     "contract:validate": "node scripts/validate-signalops-contract.mjs",
     "admin": "node scripts/signalops-admin.mjs",
-    "check": "pnpm lint && pnpm typecheck && pnpm test:csv-download && pnpm test:consumer-guard-handoff && pnpm test:home-navigation && pnpm test:contract:v1 && pnpm test:ops:v1 && pnpm test:auth:v1 && pnpm test:production:v1 && pnpm test:admin:v1 && pnpm test:events && pnpm test:ingest && pnpm build"
+    "check": "pnpm lint && pnpm typecheck && pnpm test:csv-download && pnpm test:consumer-guard-handoff && pnpm test:home-navigation && pnpm test:live-cockpit:v1 && pnpm test:contract:v1 && pnpm test:ops:v1 && pnpm test:auth:v1 && pnpm test:production:v1 && pnpm test:admin:v1 && pnpm test:events && pnpm test:ingest && pnpm build"
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",

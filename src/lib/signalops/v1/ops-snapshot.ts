@@ -78,6 +78,26 @@ export type SignalOpsOperationSnapshotV1 = {
   occurredAt: string;
 };
 
+export type SignalOpsTimelineBucketV1 = {
+  start: string;
+  end: string;
+  operations: number;
+  failedOperations: number;
+  attempts: number;
+  failedAttempts: number;
+  p95DurationMs: number | null;
+  costByCurrency: SignalOpsCurrencyCostV1[];
+};
+
+export type SignalOpsModelSnapshotV1 = {
+  modelKey: string;
+  operations: number;
+  succeeded: number;
+  failed: number;
+  successRate: number | null;
+  p95DurationMs: number | null;
+};
+
 export type SignalOpsProjectionPolicyV1 = {
   version: string;
   providerWindowMinutes: number;
@@ -127,7 +147,9 @@ export type SignalOpsOpsSnapshotV1 = {
     costByCurrency: SignalOpsCurrencyCostV1[];
   };
   environments: string[];
+  timeline: SignalOpsTimelineBucketV1[];
   providers: SignalOpsProviderSnapshotV1[];
+  models: SignalOpsModelSnapshotV1[];
   recentOperations: SignalOpsOperationSnapshotV1[];
 };
 
@@ -158,6 +180,25 @@ type ProviderAccumulator = Omit<
   }>;
 };
 
+type TimelineAccumulatorV1 = {
+  start: string;
+  end: string;
+  operations: number;
+  failedOperations: number;
+  attempts: number;
+  failedAttempts: number;
+  durations: number[];
+  costs: Map<string, SignalOpsCostTotalsV1>;
+};
+
+type ModelAccumulatorV1 = {
+  modelKey: string;
+  operations: number;
+  succeeded: number;
+  failed: number;
+  durations: number[];
+};
+
 const providerExcludedFailures = new Set<SignalOpsFailureCategoryV1>([
   "content_policy",
   "invalid_input",
@@ -169,6 +210,55 @@ export function rangeStartV1(range: SignalOpsOpsRangeV1, now = new Date()): stri
   const hours =
     range === "24h" ? 24 : range === "7d" ? 24 * 7 : range === "30d" ? 24 * 30 : 24 * 90;
   return new Date(now.getTime() - hours * 60 * 60 * 1_000).toISOString();
+}
+
+function timelineBucketCountV1(range: SignalOpsOpsRangeV1): number {
+  if (range === "24h") return 24;
+  if (range === "7d") return 28;
+  return 30;
+}
+
+function createTimelineV1(range: SignalOpsOpsRangeV1, now: Date) {
+  const startMs = Date.parse(rangeStartV1(range, now));
+  const endMs = now.getTime();
+  const bucketCount = timelineBucketCountV1(range);
+  const bucketWidthMs = (endMs - startMs) / bucketCount;
+  const buckets: TimelineAccumulatorV1[] = Array.from(
+    { length: bucketCount },
+    (_, index) => ({
+      start: new Date(startMs + index * bucketWidthMs).toISOString(),
+      end: new Date(startMs + (index + 1) * bucketWidthMs).toISOString(),
+      operations: 0,
+      failedOperations: 0,
+      attempts: 0,
+      failedAttempts: 0,
+      durations: [],
+      costs: new Map<string, SignalOpsCostTotalsV1>(),
+    }),
+  );
+
+  return { buckets, startMs, endMs, bucketWidthMs };
+}
+
+function timelineBucketV1(
+  timeline: ReturnType<typeof createTimelineV1>,
+  time: string | null | undefined,
+): TimelineAccumulatorV1 | null {
+  if (!time) return null;
+  const timestamp = Date.parse(time);
+  if (
+    !Number.isFinite(timestamp) ||
+    timestamp < timeline.startMs ||
+    timestamp > timeline.endMs
+  ) {
+    return null;
+  }
+
+  const index = Math.min(
+    timeline.buckets.length - 1,
+    Math.floor((timestamp - timeline.startMs) / timeline.bucketWidthMs),
+  );
+  return timeline.buckets[index] ?? null;
 }
 
 function percentile95(values: readonly number[]): number | null {
@@ -271,26 +361,33 @@ export function buildSignalOpsOpsSnapshotV1(input: {
   const now = input.now ?? new Date();
   const policy = input.policy ?? DEFAULT_SIGNALOPS_PROJECTION_POLICY_V1;
   const startMs = Date.parse(rangeStartV1(input.range, now));
-  const records = input.records
+  const endMs = now.getTime();
+  const lifecycleRecords = input.records
     .filter(
       (record) =>
-        record.tenantId === input.tenantId && Date.parse(record.event.time) >= startMs,
+        record.tenantId === input.tenantId &&
+        Date.parse(record.event.time) <= endMs,
     )
     .sort(compareRecords);
+  const records = lifecycleRecords.filter(
+    (record) => Date.parse(record.event.time) >= startMs,
+  );
   const operations = new Map<string, OperationState>();
   const attempts = new Map<string, AttemptState>();
   const attemptIdentity = new Map<string, string>();
   const operationIdentity = new Map<string, string>();
   const probes: Extract<SignalOpsEventV1, { type: "com.signalops.ai.provider.probe.v1" }>[] = [];
-  const environments = new Set<string>();
+  const environments = new Set(
+    records.map((record) => record.event.data.resource.environment),
+  );
   let contradictoryTerminals = 0;
   let identityCollisions = 0;
 
-  for (const record of records) {
+  for (const record of lifecycleRecords) {
     const { event } = record;
-    environments.add(event.data.resource.environment);
+    const eventInRange = Date.parse(event.time) >= startMs;
     if (event.type === "com.signalops.ai.provider.probe.v1") {
-      probes.push(event);
+      if (eventInRange) probes.push(event);
       continue;
     }
 
@@ -298,7 +395,7 @@ export function buildSignalOpsOpsSnapshotV1(input: {
     const operationSignature = `${event.data.operation.kind}\u0000${event.data.operation.logicalModelKey ?? ""}`;
     const knownOperationSignature = operationIdentity.get(operationId);
     if (knownOperationSignature && knownOperationSignature !== operationSignature) {
-      identityCollisions += 1;
+      if (eventInRange) identityCollisions += 1;
       continue;
     }
     operationIdentity.set(operationId, operationSignature);
@@ -314,7 +411,7 @@ export function buildSignalOpsOpsSnapshotV1(input: {
       ].join("\u0000");
       const knownAttemptSignature = attemptIdentity.get(event.data.attempt.id);
       if (knownAttemptSignature && knownAttemptSignature !== attemptSignature) {
-        identityCollisions += 1;
+        if (eventInRange) identityCollisions += 1;
         continue;
       }
       attemptIdentity.set(event.data.attempt.id, attemptSignature);
@@ -326,7 +423,7 @@ export function buildSignalOpsOpsSnapshotV1(input: {
       operation.accepted ??= event;
     } else if (event.type === "com.signalops.ai.operation.terminal.v1") {
       if (operation.terminal) {
-        contradictoryTerminals += 1;
+        if (eventInRange) contradictoryTerminals += 1;
       } else {
         operation.terminal ??= event;
       }
@@ -337,7 +434,7 @@ export function buildSignalOpsOpsSnapshotV1(input: {
       if (event.type === "com.signalops.ai.attempt.started.v1") {
         attempt.started ??= event;
       } else if (attempt.terminal) {
-        contradictoryTerminals += 1;
+        if (eventInRange) contradictoryTerminals += 1;
       } else {
         attempt.terminal ??= event;
       }
@@ -348,9 +445,19 @@ export function buildSignalOpsOpsSnapshotV1(input: {
 
   const providerRows = new Map<string, ProviderAccumulator>();
   const totalCosts = new Map<string, SignalOpsCostTotalsV1>();
+  const timelineState = createTimelineV1(input.range, now);
+  const modelAccumulators = new Map<string, ModelAccumulatorV1>();
+  let includedAttempts = 0;
   let retryableFailures = 0;
   for (const attempt of attempts.values()) {
     const event = attempt.terminal;
+    const bucket = timelineBucketV1(
+      timelineState,
+      attempt.started?.time ?? event?.time,
+    );
+    if (!bucket) continue;
+    includedAttempts += 1;
+    bucket.attempts += 1;
     if (!event) continue;
     const providerId = `${event.data.route.providerKey}:${event.data.route.modelKey}`;
     const row = providerRows.get(providerId) ?? {
@@ -369,6 +476,7 @@ export function buildSignalOpsOpsSnapshotV1(input: {
     const succeeded = event.data.outcome.status === "succeeded";
     if (succeeded) row.succeeded += 1;
     else row.failed += 1;
+    if (!succeeded) bucket.failedAttempts += 1;
     const failure =
       event.data.outcome.status === "failed" ? event.data.outcome.failure : undefined;
     if (failure?.retryable) {
@@ -381,6 +489,12 @@ export function buildSignalOpsOpsSnapshotV1(input: {
     if (event.data.cost) {
       addCost(row.costs, event.data.cost.currency, event.data.cost.source, event.data.cost.amount);
       addCost(totalCosts, event.data.cost.currency, event.data.cost.source, event.data.cost.amount);
+      addCost(
+        bucket.costs,
+        event.data.cost.currency,
+        event.data.cost.source,
+        event.data.cost.amount,
+      );
     }
     row.recentOutcomes.push({
       occurredAt: event.time,
@@ -440,18 +554,44 @@ export function buildSignalOpsOpsSnapshotV1(input: {
   let failedOperations = 0;
   const operationDurations: number[] = [];
   const recentOperations = [...operations.entries()]
-    .map(([operationId, state]): SignalOpsOperationSnapshotV1 => {
+    .flatMap(([operationId, state]): SignalOpsOperationSnapshotV1[] => {
       const event = state.terminal ?? state.accepted ?? state.source;
       if (!event) throw new Error(`operation ${operationId} has no lifecycle event`);
       const terminal = state.terminal;
-      if (terminal?.data.outcome.status === "succeeded") succeededOperations += 1;
-      else if (terminal) failedOperations += 1;
       const explicitDuration = terminal?.data.metrics?.totalDurationMs;
       const durationMs = terminal
         ? explicitDuration ?? durationBetween(state.accepted?.time, terminal.time)
         : null;
+      const operationBucket = timelineBucketV1(
+        timelineState,
+        state.accepted?.time ?? state.source?.time ?? event.time,
+      );
+      if (!operationBucket) return [];
+      if (terminal?.data.outcome.status === "succeeded") succeededOperations += 1;
+      else if (terminal) failedOperations += 1;
       if (durationMs !== null) operationDurations.push(durationMs);
-      return {
+      operationBucket.operations += 1;
+      if (terminal && terminal.data.outcome.status !== "succeeded") {
+        operationBucket.failedOperations += 1;
+      }
+      if (durationMs !== null) operationBucket.durations.push(durationMs);
+
+      const modelKey =
+        event.data.operation.logicalModelKey ?? event.data.operation.kind;
+      const model = modelAccumulators.get(modelKey) ?? {
+        modelKey,
+        operations: 0,
+        succeeded: 0,
+        failed: 0,
+        durations: [],
+      };
+      model.operations += 1;
+      if (terminal?.data.outcome.status === "succeeded") model.succeeded += 1;
+      else if (terminal) model.failed += 1;
+      if (durationMs !== null) model.durations.push(durationMs);
+      modelAccumulators.set(modelKey, model);
+
+      return [{
         operationId,
         kind: event.data.operation.kind,
         logicalModelKey: event.data.operation.logicalModelKey,
@@ -462,7 +602,7 @@ export function buildSignalOpsOpsSnapshotV1(input: {
         service: event.data.resource.service,
         release: event.data.resource.release,
         occurredAt: terminal?.time ?? state.accepted?.time ?? event.time,
-      };
+      }];
     })
     .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt));
 
@@ -474,6 +614,35 @@ export function buildSignalOpsOpsSnapshotV1(input: {
   const terminalOperations = succeededOperations + failedOperations;
   const truncated = input.sourceTruncated ?? false;
   const idempotencyConflicts = input.idempotencyConflictCount ?? 0;
+  const timeline: SignalOpsTimelineBucketV1[] = timelineState.buckets.map(
+    (bucket) => ({
+      start: bucket.start,
+      end: bucket.end,
+      operations: bucket.operations,
+      failedOperations: bucket.failedOperations,
+      attempts: bucket.attempts,
+      failedAttempts: bucket.failedAttempts,
+      p95DurationMs: percentile95(bucket.durations),
+      costByCurrency: costRows(bucket.costs),
+    }),
+  );
+  const models: SignalOpsModelSnapshotV1[] = [...modelAccumulators.values()]
+    .map((model) => ({
+      modelKey: model.modelKey,
+      operations: model.operations,
+      succeeded: model.succeeded,
+      failed: model.failed,
+      successRate:
+        model.succeeded + model.failed === 0
+          ? null
+          : model.succeeded / (model.succeeded + model.failed),
+      p95DurationMs: percentile95(model.durations),
+    }))
+    .sort(
+      (left, right) =>
+        right.operations - left.operations ||
+        left.modelKey.localeCompare(right.modelKey),
+    );
 
   return {
     tenant: { id: input.tenantId, name: input.tenantName ?? input.tenantId },
@@ -483,7 +652,7 @@ export function buildSignalOpsOpsSnapshotV1(input: {
     projection: {
       materialized: input.materialized ?? false,
       checkpointReceivedAt: input.checkpointReceivedAt ?? lastReceivedAt,
-      sourceEventCount: input.sourceEventCount ?? records.length,
+      sourceEventCount: input.sourceEventCount ?? lifecycleRecords.length,
     },
     dataQuality: {
       complete:
@@ -498,8 +667,8 @@ export function buildSignalOpsOpsSnapshotV1(input: {
     },
     totals: {
       events: records.length,
-      operations: operations.size,
-      attempts: attempts.size,
+      operations: recentOperations.length,
+      attempts: includedAttempts,
       succeeded: succeededOperations,
       failed: failedOperations,
       successRate:
@@ -509,7 +678,9 @@ export function buildSignalOpsOpsSnapshotV1(input: {
       costByCurrency: costRows(totalCosts),
     },
     environments: [...environments].sort(),
+    timeline,
     providers,
+    models,
     recentOperations: recentOperations.slice(0, 50),
   };
 }

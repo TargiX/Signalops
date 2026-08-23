@@ -37,7 +37,7 @@ export async function getSignalOpsOpsSnapshotV1(input: {
   const now = input.now ?? new Date();
   const since = rangeStartV1(input.range, now);
   const store = getSignalOpsRuntimeStoreV1();
-  const watermark = await store.watermark(input.tenantId, { since });
+  const watermark = await store.watermark(input.tenantId);
   const repositoryConfigured = isSignalOpsProjectionRepositoryConfiguredV1();
   if (repositoryConfigured) {
     const cached = await readSignalOpsMaterializedSnapshotV1({
@@ -55,7 +55,6 @@ export async function getSignalOpsOpsSnapshotV1(input: {
   }
 
   const records = await store.list(input.tenantId, {
-    since,
     limit: MAX_REBUILD_EVENTS + 1,
   });
   const truncated = records.length > MAX_REBUILD_EVENTS || watermark.eventCount > MAX_REBUILD_EVENTS;

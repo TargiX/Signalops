@@ -39,8 +39,12 @@ export async function resolveSignalOpsTenantPrincipalV1(
       : Boolean(configuredToken && safeEqual(token, configuredToken)));
 
   if (matchesBootstrapCredential) {
+    const tenantId =
+      process.env.SIGNALOPS_WORKSPACE_SLUG?.trim() ||
+      (process.env.NODE_ENV === "production" ? null : "demo");
+    if (!tenantId) return null;
     return {
-      tenantId: process.env.SIGNALOPS_WORKSPACE_SLUG?.trim() || "phosphene-production",
+      tenantId,
       credentialId: "bootstrap-environment-credential",
       scopes: ["events:validate", "events:write"],
     };
