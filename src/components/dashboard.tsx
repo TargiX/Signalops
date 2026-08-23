@@ -66,6 +66,10 @@ import {
   replayUrlStateMatches,
 } from "@/lib/replay-url";
 import { dispatchCsvDownload } from "@/lib/csv-download";
+import {
+  captureProductEvent,
+  captureProductException,
+} from "@/lib/product-analytics";
 import { buildSpendGuard, type SpendGuardFinding } from "@/lib/spend-guard";
 import { cn, formatCurrency, formatMs, formatNumber } from "@/lib/utils";
 
@@ -664,15 +668,29 @@ export function Dashboard() {
 
       return { previous };
     },
-    onError: (_error, _variables, context) => {
+    onError: (error, _variables, context) => {
       if (context?.previous) {
         queryClient.setQueryData(["ops-snapshot", range], context.previous);
       }
+      captureProductException(error, {
+        flow: "apply_routing_rule",
+        incident_id: selectedIncident?.id,
+        provider_id: selectedProvider?.id,
+        guard: triggerMode,
+        traffic_share: trafficShare,
+      });
     },
     onSuccess: (rule) => {
       queryClient.setQueryData<OpsSnapshot>(["ops-snapshot", range], (snapshot) =>
         snapshot ? { ...snapshot, activeRoutingRule: rule } : snapshot,
       );
+      captureProductEvent("routing_rule_applied", {
+        incident_id: rule.incidentId,
+        provider_id: rule.providerId,
+        guard: rule.guard,
+        traffic_share: rule.trafficShare,
+        range,
+      });
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["ops-snapshot", range] });
@@ -681,6 +699,10 @@ export function Dashboard() {
 
   function activateSavedView(view: SavedView) {
     setSavedView(view);
+    captureProductEvent("cockpit_saved_view_selected", {
+      view,
+      previous_view: savedView,
+    });
 
     if (view === "ops") {
       setQueueFocusProviderId("all");
@@ -846,6 +868,18 @@ export function Dashboard() {
     if (!exportResult.dispatched) {
       setExportError("Export did not start. Try again.");
     }
+
+    if (!exportResult.dispatched) {
+      captureProductEvent("cockpit_export_failed", { range, saved_view: savedView });
+      return;
+    }
+
+    captureProductEvent("cockpit_exported", {
+      range,
+      saved_view: savedView,
+      row_count: snapshotRows.length,
+      routing_applied: routingApplied,
+    });
   }
 
   if (isLoading || !data || !metrics) {
@@ -901,7 +935,10 @@ export function Dashboard() {
               {ranges.map((item) => (
                 <button
                   key={item}
-                  onClick={() => setRange(item)}
+                  onClick={() => {
+                    setRange(item);
+                    captureProductEvent("cockpit_range_selected", { range: item });
+                  }}
                   className={cn(
                     "h-8 min-w-0 flex-1 cursor-pointer rounded-md px-2 text-[12.5px] font-medium text-[var(--mute)] transition-colors sm:flex-none sm:px-3",
                     range === item && "bg-[var(--surface)] text-[var(--text)] shadow-[var(--shadow-1)]",
@@ -912,7 +949,10 @@ export function Dashboard() {
               ))}
             </div>
             <motion.button 
-              onClick={() => refetch()}
+              onClick={() => {
+                captureProductEvent("cockpit_snapshot_refreshed", { range });
+                refetch();
+              }}
               disabled={isFetching}
               aria-busy={isFetching}
               aria-label={isFetching ? "Refreshing operations snapshot" : "Refresh operations snapshot"}
@@ -1071,6 +1111,11 @@ export function Dashboard() {
                 );
 
                 setSelectedIncidentId(incidentId);
+                captureProductEvent("incident_selected", {
+                  incident_id: incidentId,
+                  provider_id: incident?.providerId,
+                  source: "cockpit_workbench",
+                });
                 setSelectedGeneration(null);
                 if (savedView === "triage" && incident) {
                   setQueueFocusProviderId(incident.providerId);
