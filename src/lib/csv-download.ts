@@ -15,6 +15,11 @@ export type CsvDownloadDispatchResult =
   | { dispatched: true }
   | { dispatched: false; error: unknown };
 
+export type TextDownloadOptions = {
+  mimeType: string;
+  byteOrderMark?: boolean;
+};
+
 const browserCsvDownloadDependencies: CsvDownloadDependencies = {
   createBlob: (parts, options) => new Blob(parts, options),
   createObjectUrl: (blob) => URL.createObjectURL(blob),
@@ -34,18 +39,22 @@ function safelyRun(action: () => void) {
   }
 }
 
-export function dispatchCsvDownload(
+export function dispatchTextDownload(
   filename: string,
-  csv: string,
+  text: string,
+  options: TextDownloadOptions,
   dependencies: CsvDownloadDependencies = browserCsvDownloadDependencies,
 ): CsvDownloadDispatchResult {
   let objectUrl: string | null = null;
   let anchor: CsvDownloadAnchor | null = null;
 
   try {
-    const blob = dependencies.createBlob([`\uFEFF${csv}`], {
-      type: "text/csv;charset=utf-8",
-    });
+    const blob = dependencies.createBlob(
+      [options.byteOrderMark ? `\uFEFF${text}` : text],
+      {
+        type: options.mimeType,
+      },
+    );
     objectUrl = dependencies.createObjectUrl(blob);
     anchor = dependencies.createAnchor();
     anchor.href = objectUrl;
@@ -72,4 +81,17 @@ export function dispatchCsvDownload(
 
     return { dispatched: false, error };
   }
+}
+
+export function dispatchCsvDownload(
+  filename: string,
+  csv: string,
+  dependencies: CsvDownloadDependencies = browserCsvDownloadDependencies,
+): CsvDownloadDispatchResult {
+  return dispatchTextDownload(
+    filename,
+    csv,
+    { mimeType: "text/csv;charset=utf-8", byteOrderMark: true },
+    dependencies,
+  );
 }

@@ -38,6 +38,17 @@ export type ChartProvider = {
   color: string;
 };
 
+function chartProviderDatum(provider: ChartProvider): Omit<ChartProvider, "id"> {
+  return {
+    name: provider.name,
+    p95Ms: provider.p95Ms,
+    failureRate: provider.failureRate,
+    spend: provider.spend,
+    volume: provider.volume,
+    color: provider.color,
+  };
+}
+
 const tooltipStyle = {
   background: "color-mix(in oklch, var(--surface) 95%, transparent)",
   backdropFilter: "blur(8px)",
@@ -46,6 +57,11 @@ const tooltipStyle = {
   boxShadow: "var(--shadow-3, 0 8px 24px rgba(20,20,30,0.08))",
   color: "var(--text)",
 };
+
+function formatFailureRate(value: unknown, fractionDigits: number): string {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? `${numeric.toFixed(fractionDigits)}%` : "—";
+}
 
 type GlowTone = "accent" | "warning";
 
@@ -212,7 +228,7 @@ export function SpendDonutChart({
         <>
           <PieChart width={width} height={254}>
             <Pie
-              data={data}
+              data={data.map(chartProviderDatum)}
               cx="50%"
               cy="50%"
               innerRadius={76}
@@ -385,7 +401,7 @@ export function PerformanceScatterChart({ data }: { data: ChartProvider[] }) {
             type="number" 
             dataKey="failureRate" 
             name="Failure Rate" 
-            tickFormatter={(value) => `${value}%`}
+            tickFormatter={(value) => formatFailureRate(value, 0)}
             tickLine={false} 
             axisLine={false} 
             tick={{ fill: "var(--mute)", fontSize: 11 }} 
@@ -397,7 +413,7 @@ export function PerformanceScatterChart({ data }: { data: ChartProvider[] }) {
             contentStyle={tooltipStyle}
             isAnimationActive={!reduceMotion}
             formatter={(value, name) => [
-              name === "Latency" ? formatMs(Number(value)) : name === "Failure Rate" ? `${value}%` : value, 
+              name === "Latency" ? formatMs(Number(value)) : name === "Failure Rate" ? formatFailureRate(value, 1) : value,
               name
             ]}
           />
@@ -405,7 +421,7 @@ export function PerformanceScatterChart({ data }: { data: ChartProvider[] }) {
             <Scatter 
               key={entry.id} 
               name={entry.name} 
-              data={[entry]} 
+              data={[chartProviderDatum(entry)]}
               fill={entry.color} 
               opacity={0.8}
               isAnimationActive={!reduceMotion}
