@@ -1,0 +1,38 @@
+{
+  "name": "@signalops/contracts",
+  "version": "1.0.0",
+  "description": "Framework-neutral TypeScript types for SignalOps Canonical AI Telemetry V1",
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./v1": {
+      "types": "./dist/v1.d.ts",
+      "import": "./dist/v1.js"
+    },
+    "./v1/event.schema.json": "./dist/artifacts/event.schema.json",
+    "./v1/ingest-response.schema.json": "./dist/artifacts/ingest-response.schema.json",
+    "./v1/semantic-validation": "./dist/artifacts/semantic-validation.mjs",
+    "./v1/fixtures/*": "./dist/artifacts/fixtures/*"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/copy-artifacts.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5"
+  }
+}
