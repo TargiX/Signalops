@@ -10,7 +10,7 @@
   --text: #17213c;
   --text-strong: #07122b;
   --text-dim: #62708b;
-  --mute: #8c97ad;
+  --mute: #68758a;
   --accent: #3459df;
   --accent-soft: #edf3ff;
   --accent-hover: #2548c6;
@@ -90,4 +90,15 @@ select:focus-visible,
 input:focus-visible {
   outline: none;
   box-shadow: var(--shadow-focus);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

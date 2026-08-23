@@ -3,18 +3,27 @@
 import {
   Activity,
   ArrowRight,
+  ArrowUpDown,
+  Check,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
   Clock3,
+  Copy,
   Database,
   DollarSign,
+  Download,
   ExternalLink,
   Gauge,
+  Keyboard,
   LogOut,
+  Pause,
+  Play,
   RefreshCw,
+  Search,
   ShieldCheck,
   TriangleAlert,
+  X,
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
@@ -28,13 +37,20 @@ import {
   type ChartTimeBucket,
 } from "@/components/charts";
 import { OperationTraceDrawer } from "@/components/operation-trace-drawer";
+import { dispatchCsvDownload } from "@/lib/csv-download";
 import type { SignalOpsIncidentV1 } from "@/lib/signalops/v1/incidents";
 import {
+  applySignalOpsCockpitViewV1,
   applySignalOpsCockpitRangeV1,
-  filterSignalOpsOperationsV1,
+  buildSignalOpsOperationsCsvV1,
+  createSignalOpsCockpitShareUrlV1,
+  filterAndSortSignalOpsOperationsV1,
+  mergeSignalOpsOperationSamplesV1,
   paginateSignalOpsRowsV1,
-  readSignalOpsCockpitRangeV1,
+  readSignalOpsCockpitViewV1,
+  type SignalOpsCockpitViewV1,
   type SignalOpsOperationFilterV1,
+  type SignalOpsOperationSortV1,
 } from "@/lib/signalops/v1/cockpit-view";
 import type {
   SignalOpsCurrencyCostV1,
@@ -87,7 +103,18 @@ const chartColors = ["#3459df", "#24a17e", "#e6a23c", "#d24b63", "#7b61d1", "#16
 const MODEL_PAGE_SIZE = 5;
 const PROVIDER_PAGE_SIZE = 5;
 const OPERATION_PAGE_SIZE = 10;
+const AUTO_REFRESH_SECONDS = 10;
 const cockpitRanges = ["24h", "7d", "30d", "90d"] as const;
+
+const operationSortOptions: ReadonlyArray<{
+  value: SignalOpsOperationSortV1;
+  label: string;
+}> = [
+  { value: "newest", label: "Newest first" },
+  { value: "attention", label: "Attention first" },
+  { value: "slowest", label: "Slowest first" },
+  { value: "attempts", label: "Most attempts" },
+];
 
 type LoadMode = "initial" | "refresh";
 
@@ -236,11 +263,37 @@ function replaceCockpitRangeUrl(range: SignalOpsOpsRangeV1): void {
   }
 }
 
+function replaceCockpitViewUrl(view: SignalOpsCockpitViewV1): void {
+  if (typeof window === "undefined") return;
+  try {
+    const nextUrl = applySignalOpsCockpitViewV1(
+      new URL(window.location.href),
+      view,
+    );
+    window.history.replaceState(window.history.state, "", nextUrl);
+  } catch {
+    // URL state is an enhancement; live analysis must keep working if history is unavailable.
+  }
+}
+
+function isEditableShortcutTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return (
+    target.isContentEditable ||
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement
+  );
+}
+
 export function LiveCockpit() {
-  const [range, setRange] = useState<SignalOpsOpsRangeV1>(() =>
+  const [initialView] = useState<SignalOpsCockpitViewV1>(() =>
     typeof window === "undefined"
-      ? "90d"
-      : readSignalOpsCockpitRangeV1(window.location.search),
+      ? readSignalOpsCockpitViewV1("", "90d")
+      : readSignalOpsCockpitViewV1(window.location.search),
+  );
+  const [range, setRange] = useState<SignalOpsOpsRangeV1>(
+    initialView.range,
   );
   const initialRangeRef = useRef(range);
   const [pendingRange, setPendingRange] = useState<SignalOpsOpsRangeV1 | null>(null);
@@ -257,11 +310,32 @@ export function LiveCockpit() {
   const [switchingTenant, setSwitchingTenant] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState("");
-  const [operationFilter, setOperationFilter] = useState<SignalOpsOperationFilterV1>("all");
+  const [autoRefreshPaused, setAutoRefreshPaused] = useState(false);
+  const [autoRefreshCountdown, setAutoRefreshCountdown] = useState(
+    AUTO_REFRESH_SECONDS,
+  );
+  const [operationFilter, setOperationFilter] =
+    useState<SignalOpsOperationFilterV1>(initialView.status);
+  const [operationQuery, setOperationQuery] = useState("");
+  const [operationModel, setOperationModel] = useState<string | null>(
+    initialView.model,
+  );
+  const [operationFailure, setOperationFailure] = useState<string | null>(
+    initialView.failure,
+  );
+  const [operationSort, setOperationSort] =
+    useState<SignalOpsOperationSortV1>(initialView.sort);
   const [operationPage, setOperationPage] = useState(1);
   const [modelPage, setModelPage] = useState(1);
   const [providerPage, setProviderPage] = useState(1);
-  const [selectedOperationId, setSelectedOperationId] = useState<string | null>(null);
+  const [selectedOperationId, setSelectedOperationId] = useState<string | null>(
+    initialView.operationId,
+  );
+  const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
+  const [feedback, setFeedback] = useState<{
+    message: string;
+    tone: "success" | "error";
+  } | null>(null);
   const snapshotRef = useRef<SignalOpsOpsSnapshotV1 | null>(null);
   const activeLoadRef = useRef<AbortController | null>(null);
   const loadSequenceRef = useRef(0);
@@ -269,7 +343,10 @@ export function LiveCockpit() {
   const qualitySectionRef = useRef<HTMLElement>(null);
   const routeSectionRef = useRef<HTMLElement>(null);
   const operationSectionRef = useRef<HTMLDivElement>(null);
+  const operationSearchRef = useRef<HTMLInputElement>(null);
   const operationTraceTriggerRef = useRef<HTMLElement | null>(null);
+  const shortcutHelpRef = useRef<HTMLDivElement>(null);
+  const feedbackTimerRef = useRef<number | null>(null);
 
   const load = useCallback(async (
     requestedRange: SignalOpsOpsRangeV1,
@@ -367,12 +444,6 @@ export function LiveCockpit() {
     };
   }, [load]);
 
-  useEffect(() => {
-    if (state !== "ready" || isRefreshing) return;
-    const interval = window.setInterval(() => void load(range, "refresh"), 10_000);
-    return () => window.clearInterval(interval);
-  }, [isRefreshing, load, range, state]);
-
   async function login(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSubmitting(true);
@@ -439,6 +510,12 @@ export function LiveCockpit() {
     if (!tenantId || tenantId === snapshot?.tenant.id) return;
     setSwitchingTenant(true);
     setSelectedOperationId(null);
+    setOperationFilter("all");
+    setOperationQuery("");
+    setOperationModel(null);
+    setOperationFailure(null);
+    setOperationSort("newest");
+    setOperationPage(1);
     try {
       const response = await fetch("/api/cockpit/session", {
         method: "POST",
@@ -465,11 +542,14 @@ export function LiveCockpit() {
     setIncidents([]);
     setSloEvaluations([]);
     setSelectedOperationId(null);
+    setOperationQuery("");
+    setOperationModel(null);
+    setOperationFailure(null);
     setState("unauthorized");
     await load(range, "initial");
   }
 
-  function selectRange(value: SignalOpsOpsRangeV1) {
+  const selectRange = useCallback((value: SignalOpsOpsRangeV1) => {
     if (value === pendingRange || (!pendingRange && value === range)) return;
     setPendingRange(value);
     setSelectedOperationId(null);
@@ -477,28 +557,235 @@ export function LiveCockpit() {
     setModelPage(1);
     setProviderPage(1);
     void load(value, "refresh");
-  }
+  }, [load, pendingRange, range]);
 
-  function scrollToSection(ref: React.RefObject<HTMLElement | null>) {
+  const scrollToSection = useCallback((ref: React.RefObject<HTMLElement | null>) => {
     window.requestAnimationFrame(() => {
       ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
       ref.current?.focus({ preventScroll: true });
     });
-  }
+  }, []);
 
-  function activateOperationFilter(filter: SignalOpsOperationFilterV1) {
+  const activateOperationFilter = useCallback((filter: SignalOpsOperationFilterV1) => {
     setOperationFilter(filter);
+    setOperationModel(null);
+    setOperationFailure(null);
+    setOperationQuery("");
     setOperationPage(1);
     window.requestAnimationFrame(() => {
       operationSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
       operationSectionRef.current?.focus({ preventScroll: true });
     });
-  }
+  }, []);
 
-  function openOperationTrace(operationId: string, trigger: HTMLElement) {
+  const focusOperationSearch = useCallback(() => {
+    window.requestAnimationFrame(() => {
+      operationSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      operationSearchRef.current?.focus({ preventScroll: true });
+    });
+  }, []);
+
+  const focusModelOperations = useCallback((model: string) => {
+    setOperationFilter("all");
+    setOperationModel(model);
+    setOperationFailure(null);
+    setOperationQuery("");
+    setOperationPage(1);
+    window.requestAnimationFrame(() => {
+      operationSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      operationSectionRef.current?.focus({ preventScroll: true });
+    });
+  }, []);
+
+  const focusFailureOperations = useCallback((failure: string) => {
+    setOperationFilter("failed");
+    setOperationFailure(failure);
+    setOperationModel(null);
+    setOperationQuery("");
+    setOperationPage(1);
+    window.requestAnimationFrame(() => {
+      operationSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      operationSectionRef.current?.focus({ preventScroll: true });
+    });
+  }, []);
+
+  const clearOperationView = useCallback(() => {
+    setOperationFilter("all");
+    setOperationQuery("");
+    setOperationModel(null);
+    setOperationFailure(null);
+    setOperationSort("newest");
+    setOperationPage(1);
+  }, []);
+
+  const openOperationTrace = useCallback((operationId: string, trigger: HTMLElement) => {
     operationTraceTriggerRef.current = trigger;
     setSelectedOperationId(operationId);
-  }
+  }, []);
+
+  const closeOperationTrace = useCallback(() => {
+    setSelectedOperationId(null);
+  }, []);
+
+  const showFeedback = useCallback(
+    (message: string, tone: "success" | "error" = "success") => {
+      if (feedbackTimerRef.current) {
+        window.clearTimeout(feedbackTimerRef.current);
+      }
+      setFeedback({ message, tone });
+      feedbackTimerRef.current = window.setTimeout(() => {
+        setFeedback(null);
+        feedbackTimerRef.current = null;
+      }, 2400);
+    },
+    [],
+  );
+
+  const copyText = useCallback(async (value: string, successMessage: string) => {
+    let timeoutId: number | null = null;
+    try {
+      if (!navigator.clipboard) throw new Error("clipboard unavailable");
+      await Promise.race([
+        navigator.clipboard.writeText(value),
+        new Promise<never>((_, reject) => {
+          timeoutId = window.setTimeout(
+            () => reject(new Error("clipboard timed out")),
+            1_200,
+          );
+        }),
+      ]);
+      showFeedback(successMessage);
+    } catch {
+      showFeedback("Clipboard unavailable", "error");
+    } finally {
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
+    }
+  }, [showFeedback]);
+
+  useEffect(() => {
+    return () => {
+      if (feedbackTimerRef.current) {
+        window.clearTimeout(feedbackTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    replaceCockpitViewUrl({
+      range,
+      status: operationFilter,
+      model: operationModel,
+      failure: operationFailure,
+      sort: operationSort,
+      operationId: selectedOperationId,
+    });
+  }, [
+    operationFailure,
+    operationFilter,
+    operationModel,
+    operationSort,
+    range,
+    selectedOperationId,
+  ]);
+
+  useEffect(() => {
+    if (
+      state !== "ready" ||
+      isRefreshing ||
+      autoRefreshPaused
+    ) {
+      return;
+    }
+
+    let deadline = Date.now() + AUTO_REFRESH_SECONDS * 1_000;
+    const tick = () => {
+      if (document.visibilityState !== "visible") {
+        deadline = Date.now() + AUTO_REFRESH_SECONDS * 1_000;
+        setAutoRefreshCountdown(AUTO_REFRESH_SECONDS);
+        return;
+      }
+      const remaining = Math.max(0, Math.ceil((deadline - Date.now()) / 1_000));
+      setAutoRefreshCountdown(remaining);
+      if (remaining === 0) {
+        window.clearInterval(interval);
+        void load(range, "refresh");
+      }
+    };
+    const kickoff = window.setTimeout(tick, 0);
+    const interval = window.setInterval(tick, 1_000);
+    return () => {
+      window.clearTimeout(kickoff);
+      window.clearInterval(interval);
+    };
+  }, [autoRefreshPaused, isRefreshing, load, range, state]);
+
+  useEffect(() => {
+    function handleShortcut(event: KeyboardEvent) {
+      if (
+        state !== "ready" ||
+        event.defaultPrevented ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey ||
+        event.repeat
+      ) {
+        return;
+      }
+
+      if (event.key === "Escape" && shortcutHelpOpen) {
+        event.preventDefault();
+        setShortcutHelpOpen(false);
+        return;
+      }
+      if (selectedOperationId || isEditableShortcutTarget(event.target)) return;
+
+      if (event.key === "/") {
+        event.preventDefault();
+        focusOperationSearch();
+      } else if (event.key.toLocaleLowerCase() === "f") {
+        event.preventDefault();
+        activateOperationFilter("failed");
+      } else if (event.key.toLocaleLowerCase() === "r" && !isRefreshing) {
+        event.preventDefault();
+        void load(range, "refresh");
+      } else if (event.key === "?") {
+        event.preventDefault();
+        setShortcutHelpOpen((open) => !open);
+      } else {
+        const shortcutRange = cockpitRanges[Number(event.key) - 1];
+        if (shortcutRange) {
+          event.preventDefault();
+          selectRange(shortcutRange);
+        }
+      }
+    }
+    window.addEventListener("keydown", handleShortcut);
+    return () => window.removeEventListener("keydown", handleShortcut);
+  }, [
+    activateOperationFilter,
+    focusOperationSearch,
+    isRefreshing,
+    load,
+    range,
+    selectRange,
+    selectedOperationId,
+    shortcutHelpOpen,
+    state,
+  ]);
+
+  useEffect(() => {
+    function dismissShortcutHelp(event: PointerEvent) {
+      if (
+        shortcutHelpOpen &&
+        event.target instanceof Node &&
+        !shortcutHelpRef.current?.contains(event.target)
+      ) {
+        setShortcutHelpOpen(false);
+      }
+    }
+    document.addEventListener("pointerdown", dismissShortcutHelp);
+    return () => document.removeEventListener("pointerdown", dismissShortcutHelp);
+  }, [shortcutHelpOpen]);
 
   if (state === "unauthorized") {
     const hasOAuth = session.auth.supabase && session.auth.providers.length > 0;
@@ -673,11 +960,20 @@ export function LiveCockpit() {
     snapshot.totals.operations === 0
       ? null
       : snapshot.totals.operationsWithAttemptTelemetry / snapshot.totals.operations;
-  const operationSource =
-    operationFilter === "failed"
-      ? snapshot.recentFailedOperations
-      : snapshot.recentOperations;
-  const filteredOperations = filterSignalOpsOperationsV1(operationSource, operationFilter);
+  const retainedOperations = mergeSignalOpsOperationSamplesV1(
+    snapshot.recentOperations,
+    snapshot.recentFailedOperations,
+  );
+  const filteredOperations = filterAndSortSignalOpsOperationsV1(
+    retainedOperations,
+    {
+      status: operationFilter,
+      query: operationQuery,
+      model: operationModel,
+      failure: operationFailure,
+      sort: operationSort,
+    },
+  );
   const operationPagination = paginateSignalOpsRowsV1(
     filteredOperations,
     operationPage,
@@ -704,16 +1000,55 @@ export function LiveCockpit() {
   const unclassifiedFailures = snapshot.failureBreakdown
     .filter((failure) => failure.category === "unknown")
     .reduce((total, failure) => total + failure.operations, 0);
-  const operationFilterTotal =
-    operationFilter === "all"
-      ? snapshot.totals.operations
-      : operationFilter === "succeeded"
-        ? snapshot.totals.succeeded
-        : operationFilter === "failed"
-          ? snapshot.totals.failed
-          : runningOperations;
+  const hasFocusedOperationView = Boolean(
+    operationQuery ||
+      operationModel ||
+      operationFailure ||
+      operationFilter !== "all" ||
+      operationSort !== "newest",
+  );
+
+  async function copyCockpitView() {
+    try {
+      const shareUrl = createSignalOpsCockpitShareUrlV1(
+        new URL(window.location.href),
+        {
+          range: pendingRange ?? range,
+          status: operationFilter,
+          model: operationModel,
+          failure: operationFailure,
+          sort: operationSort,
+          operationId: selectedOperationId,
+        },
+      );
+      await copyText(shareUrl.toString(), "Analysis view copied");
+    } catch {
+      showFeedback("Couldn’t create a share link", "error");
+    }
+  }
+
+  function downloadOperationsCsv() {
+    const csv = buildSignalOpsOperationsCsvV1(filteredOperations);
+    const date = new Date().toISOString().slice(0, 10);
+    const result = dispatchCsvDownload(
+      `signalops-operations-${displayedRange}-${date}.csv`,
+      csv,
+    );
+    showFeedback(
+      result.dispatched
+        ? `${formatNumber(filteredOperations.length)} retained operations exported`
+        : "CSV export unavailable",
+      result.dispatched ? "success" : "error",
+    );
+  }
   return (
     <>
+    <a
+      href="#operations-explorer"
+      className="fixed left-4 top-4 z-[100] -translate-y-20 rounded-lg bg-[var(--text-strong)] px-4 py-2 text-xs font-semibold text-white shadow-lg transition-transform focus:translate-y-0"
+    >
+      Skip to operations
+    </a>
     <main className="min-h-screen bg-[radial-gradient(circle_at_78%_0%,rgba(52,89,223,0.10),transparent_28%),#f8faff] text-[var(--text)]">
       <div className="mx-auto w-full max-w-[1440px] px-5 py-6 sm:px-8 lg:px-10">
         <header className="flex flex-wrap items-center justify-between gap-4 border-b border-[var(--border)] pb-5">
@@ -759,7 +1094,7 @@ export function LiveCockpit() {
           aria-busy={isRefreshing}
           className="sticky top-2 z-30 mt-5"
         >
-          <div className="rounded-xl border border-white/80 bg-white/90 p-1.5 shadow-[0_10px_32px_rgba(34,55,105,0.14)] ring-1 ring-[var(--border)] backdrop-blur-xl">
+          <div ref={shortcutHelpRef} className="relative rounded-xl border border-white/80 bg-white/90 p-1.5 shadow-[0_10px_32px_rgba(34,55,105,0.14)] ring-1 ring-[var(--border)] backdrop-blur-xl">
             <div className="flex min-h-11 items-center gap-2 overflow-x-auto px-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               <span className="shrink-0 pl-1 font-mono text-[9px] font-bold uppercase tracking-[0.1em] text-[var(--mute)]">Window</span>
               <div className="flex shrink-0 rounded-lg bg-[var(--surface-mute)] p-1" aria-label="Analysis window">
@@ -785,14 +1120,55 @@ export function LiveCockpit() {
                   ? `Updating to ${pendingRange} · showing ${displayedRange}`
                   : refreshError || `${formatNumber(snapshot.totals.operations)} ops · ${formatNumber(snapshot.totals.failed)} failed · p95 ${formatDuration(snapshot.totals.p95DurationMs)}`}
               </div>
+              <button
+                type="button"
+                aria-pressed={autoRefreshPaused}
+                aria-label={autoRefreshPaused ? "Paused. Resume auto-refresh" : `Auto ${autoRefreshCountdown}s. Pause auto-refresh`}
+                title={autoRefreshPaused ? "Resume auto-refresh" : "Pause auto-refresh"}
+                onClick={() => {
+                  setAutoRefreshPaused((paused) => !paused);
+                  setAutoRefreshCountdown(AUTO_REFRESH_SECONDS);
+                }}
+                className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border px-2.5 text-[10px] font-semibold transition ${autoRefreshPaused ? "border-amber-200 bg-amber-50 text-amber-800" : "border-[var(--border)] bg-white text-[var(--text-dim)] hover:border-[var(--accent)] hover:text-[var(--accent)]"}`}
+              >
+                {autoRefreshPaused ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}
+                {autoRefreshPaused ? "Paused" : `Auto ${autoRefreshCountdown}s`}
+              </button>
               <span className="mx-1 h-6 w-px shrink-0 bg-[var(--border)]" />
               <button type="button" onClick={() => activateOperationFilter("failed")} className="shrink-0 rounded-lg px-2.5 py-1.5 text-[10px] font-semibold text-rose-700 transition hover:bg-rose-50">Failures <span className="ml-1 font-mono">{formatNumber(snapshot.totals.failed)}</span></button>
               <button type="button" onClick={() => scrollToSection(qualitySectionRef)} className="shrink-0 rounded-lg px-2.5 py-1.5 text-[10px] font-semibold text-[var(--text-dim)] transition hover:bg-[var(--surface-mute)] hover:text-[var(--accent)]">Coverage <span className="ml-1 font-mono">{formatPercent(attemptCoverage)}</span></button>
               <button type="button" onClick={() => scrollToSection(routeSectionRef)} className="shrink-0 rounded-lg px-2.5 py-1.5 text-[10px] font-semibold text-[var(--text-dim)] transition hover:bg-[var(--surface-mute)] hover:text-[var(--accent)]">Routes <span className="ml-1 font-mono">{formatNumber(snapshot.providers.length)}</span></button>
               {sloEvaluations.length > 0 ? <button type="button" onClick={() => scrollToSection(sloSectionRef)} className="shrink-0 rounded-lg px-2.5 py-1.5 text-[10px] font-semibold text-[var(--text-dim)] transition hover:bg-[var(--surface-mute)] hover:text-[var(--accent)]">SLOs <span className="ml-1 font-mono">{formatNumber(sloEvaluations.filter((evaluation) => evaluation.status === "breached").length)}</span></button> : null}
               <button type="button" onClick={() => activateOperationFilter("all")} className="shrink-0 rounded-lg px-2.5 py-1.5 text-[10px] font-semibold text-[var(--text-dim)] transition hover:bg-[var(--surface-mute)] hover:text-[var(--accent)]">Operations</button>
+              <button type="button" onClick={() => void copyCockpitView()} className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-[var(--border)] bg-white px-2.5 text-[10px] font-semibold text-[var(--text-dim)] transition hover:border-[var(--accent)] hover:text-[var(--accent)]" title="Copy a privacy-safe link to this analysis view"><Copy className="size-3.5" /> Copy view</button>
+              <button
+                type="button"
+                aria-expanded={shortcutHelpOpen}
+                aria-controls="cockpit-shortcuts"
+                onClick={() => setShortcutHelpOpen((open) => !open)}
+                className="grid size-8 shrink-0 place-items-center rounded-lg border border-[var(--border)] bg-white text-[var(--text-dim)] transition hover:border-[var(--accent)] hover:text-[var(--accent)]"
+                aria-label="Keyboard shortcuts"
+                title="Keyboard shortcuts (?)"
+              >
+                <Keyboard className="size-3.5" />
+              </button>
               <button type="button" onClick={() => void load(range, "refresh")} disabled={isRefreshing} className="ml-auto grid size-8 shrink-0 place-items-center rounded-lg border border-[var(--border)] bg-white text-[var(--text-dim)] transition hover:border-[var(--accent)] hover:text-[var(--accent)] disabled:opacity-50" aria-label="Refresh analysis"><RefreshCw className={`size-3.5 ${isRefreshing ? "animate-spin" : ""}`} /></button>
             </div>
+            {shortcutHelpOpen ? (
+              <div id="cockpit-shortcuts" role="dialog" aria-label="Keyboard shortcuts" className="absolute right-0 top-[calc(100%+0.5rem)] z-50 w-[280px] rounded-xl border border-[var(--border)] bg-white p-4 shadow-xl">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs font-semibold text-[var(--text-strong)]">Keyboard shortcuts</p>
+                  <button type="button" onClick={() => setShortcutHelpOpen(false)} className="grid size-7 place-items-center rounded-md text-[var(--mute)] hover:bg-[var(--surface-mute)] hover:text-[var(--text)]" aria-label="Close shortcuts"><X className="size-3.5" /></button>
+                </div>
+                <dl className="mt-3 grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-2 text-[10px] text-[var(--text-dim)]">
+                  <ShortcutKey keys="/" label="Search retained operations" />
+                  <ShortcutKey keys="F" label="Show failed operations" />
+                  <ShortcutKey keys="R" label="Refresh the snapshot" />
+                  <ShortcutKey keys="1–4" label="Switch analysis window" />
+                  <ShortcutKey keys="?" label="Open or close this guide" />
+                </dl>
+              </div>
+            ) : null}
           </div>
         </section>
 
@@ -892,7 +1268,7 @@ export function LiveCockpit() {
                     </div>
                     <p className="mt-4 text-xl font-semibold tracking-tight">{formatSloValue(evaluation, evaluation.observedValue)}</p>
                     <p className="mt-1 text-[9px] opacity-75">objective {evaluation.policy.comparator === "gte" ? "≥" : "≤"} {formatSloValue(evaluation, evaluation.policy.objective)}</p>
-                    <p className="mt-3 font-mono text-[8px] opacity-65">n={formatNumber(evaluation.sampleSize)} · min {formatNumber(evaluation.policy.minimumSample)} · {evaluation.policy.version}</p>
+                    <p className="mt-3 font-mono text-[8px]">n={formatNumber(evaluation.sampleSize)} · min {formatNumber(evaluation.policy.minimumSample)} · {evaluation.policy.version}</p>
                   </div>
                 );
               })}
@@ -935,7 +1311,7 @@ export function LiveCockpit() {
 
           <Panel
             title="Failure intelligence"
-            subtitle={`${formatNumber(snapshot.totals.failed)} unsuccessful operation${snapshot.totals.failed === 1 ? "" : "s"} in this range`}
+            subtitle={`${formatNumber(snapshot.totals.failed)} unsuccessful operation${snapshot.totals.failed === 1 ? "" : "s"} · select a category to inspect retained evidence`}
           >
             {snapshot.failureBreakdown.length === 0 ? (
               <EmptyState text="Normalized failure categories appear after an operation records an unsuccessful terminal outcome." />
@@ -951,7 +1327,13 @@ export function LiveCockpit() {
                 ) : null}
                 <div className="divide-y divide-[var(--border-soft)]">
                   {snapshot.failureBreakdown.slice(0, 7).map((failure) => (
-                    <div key={`${failure.category}:${failure.responsibility}`} className="py-3 first:pt-0 last:pb-0">
+                    <button
+                      type="button"
+                      key={`${failure.category}:${failure.responsibility}`}
+                      aria-pressed={operationFailure === failure.category}
+                      onClick={() => focusFailureOperations(failure.category)}
+                      className={`block w-full rounded-lg px-2 py-3 text-left transition first:pt-2 last:pb-2 hover:bg-rose-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] ${operationFailure === failure.category ? "bg-rose-50 ring-1 ring-rose-200" : ""}`}
+                    >
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
                           <p className="truncate text-xs font-semibold text-[var(--text-strong)]">{failure.category.replaceAll("_", " ")}</p>
@@ -965,7 +1347,7 @@ export function LiveCockpit() {
                           style={{ width: `${Math.max(4, (failure.operations / maxFailureOperations) * 100)}%` }}
                         />
                       </div>
-                    </div>
+                    </button>
                   ))}
                 </div>
               </>
@@ -1017,16 +1399,19 @@ export function LiveCockpit() {
             )}
           </Panel>
 
-          <Panel title="Model performance" subtitle="Logical model classes from canonical operation lifecycles">
+          <Panel title="Model performance" subtitle="Logical model classes · select one to inspect retained operations">
             {snapshot.models.length === 0 ? (
               <EmptyState text="Model performance appears after the source application sends an operation." />
             ) : (
               <>
                 <div className="divide-y divide-[var(--border-soft)]">
                 {modelPagination.rows.map((model) => (
-                  <div
+                  <button
+                    type="button"
                     key={model.modelKey}
-                    className="grid gap-3 py-4 first:pt-0 last:pb-0 sm:grid-cols-[1fr_auto] sm:items-center"
+                    aria-pressed={operationModel === model.modelKey}
+                    onClick={() => focusModelOperations(model.modelKey)}
+                    className={`grid w-full gap-3 rounded-lg px-2 py-4 text-left transition first:pt-2 last:pb-2 hover:bg-[var(--accent-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] sm:grid-cols-[1fr_auto] sm:items-center ${operationModel === model.modelKey ? "bg-[var(--accent-soft)] ring-1 ring-blue-200" : ""}`}
                   >
                     <div>
                       <p className="font-mono text-[11px] font-semibold text-[var(--text-strong)]">
@@ -1044,7 +1429,7 @@ export function LiveCockpit() {
                       <Mini label="p95" value={formatDuration(model.p95DurationMs)} />
                       <Mini label="Success" value={formatPercent(model.successRate)} />
                     </div>
-                  </div>
+                  </button>
                 ))}
                 </div>
                 <Pagination
@@ -1060,28 +1445,81 @@ export function LiveCockpit() {
             )}
           </Panel>
 
-          <div ref={operationSectionRef} tabIndex={-1} className="min-w-0 scroll-mt-24 outline-none lg:col-span-2">
+          <div id="operations-explorer" ref={operationSectionRef} tabIndex={-1} className="min-w-0 scroll-mt-24 outline-none lg:col-span-2">
             <Panel
               title="Operations explorer"
-              subtitle={`${formatNumber(operationPagination.total)} available of ${formatNumber(operationFilterTotal)} ${operationFilter === "all" ? "operations" : `${operationFilter} outcomes`} in this range · identifiers only`}
+              subtitle={`${formatNumber(operationPagination.total)} retained match${operationPagination.total === 1 ? "" : "es"} across ${formatNumber(retainedOperations.length)} indexed rows · ${formatNumber(snapshot.totals.operations)} total operations in ${displayedRange} · identifiers only`}
             >
-              <div className="mb-5 flex flex-wrap gap-2" aria-label="Operation status filter">
+              <div className="mb-4 grid gap-2 lg:grid-cols-[minmax(260px,1fr)_190px_auto_auto]">
+                <label className="relative block">
+                  <span className="sr-only">Search retained operations</span>
+                  <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[var(--mute)]" />
+                  <input
+                    ref={operationSearchRef}
+                    type="search"
+                    value={operationQuery}
+                    onChange={(event) => {
+                      setOperationQuery(event.target.value);
+                      setOperationPage(1);
+                    }}
+                    aria-keyshortcuts="/"
+                    placeholder="Search ID, model, service, failure…"
+                    className="h-10 w-full rounded-lg border border-[var(--border)] bg-white pl-9 pr-9 text-xs text-[var(--text-strong)] shadow-sm placeholder:text-[var(--mute)]"
+                  />
+                  {operationQuery ? (
+                    <button type="button" onClick={() => setOperationQuery("")} className="absolute right-1.5 top-1/2 grid size-7 -translate-y-1/2 place-items-center rounded-md text-[var(--mute)] hover:bg-[var(--surface-mute)] hover:text-[var(--text)]" aria-label="Clear operation search"><X className="size-3.5" /></button>
+                  ) : null}
+                </label>
+                <label className="relative block">
+                  <span className="sr-only">Sort retained operations</span>
+                  <ArrowUpDown className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-[var(--mute)]" />
+                  <select
+                    value={operationSort}
+                    onChange={(event) => {
+                      setOperationSort(event.target.value as SignalOpsOperationSortV1);
+                      setOperationPage(1);
+                    }}
+                    className="h-10 w-full appearance-none rounded-lg border border-[var(--border)] bg-white pl-9 pr-8 text-xs font-semibold text-[var(--text-dim)] shadow-sm"
+                  >
+                    {operationSortOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  </select>
+                </label>
+                <button type="button" onClick={() => void copyCockpitView()} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-white px-3 text-xs font-semibold text-[var(--text-dim)] transition hover:border-[var(--accent)] hover:text-[var(--accent)]" title="Copy range and safe filters; free-form search is intentionally excluded"><Copy className="size-3.5" /> Share</button>
+                <button type="button" disabled={filteredOperations.length === 0} onClick={downloadOperationsCsv} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-white px-3 text-xs font-semibold text-[var(--text-dim)] transition hover:border-[var(--accent)] hover:text-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-40" title="Export the current retained matches, not every operation in the range"><Download className="size-3.5" /> CSV</button>
+              </div>
+              <div className="mb-4 flex flex-wrap gap-2" aria-label="Operation status filter">
                 <FilterChip label="All" count={snapshot.totals.operations} active={operationFilter === "all"} onClick={() => activateOperationFilter("all")} />
                 <FilterChip label="Succeeded" count={snapshot.totals.succeeded} active={operationFilter === "succeeded"} tone="good" onClick={() => activateOperationFilter("succeeded")} />
                 <FilterChip label="Failed" count={snapshot.totals.failed} active={operationFilter === "failed"} tone="bad" onClick={() => activateOperationFilter("failed")} />
                 <FilterChip label="Running" count={runningOperations} active={operationFilter === "running"} onClick={() => activateOperationFilter("running")} />
               </div>
+              {(operationModel || operationFailure || operationQuery || operationSort !== "newest") ? (
+                <div className="mb-5 flex flex-wrap items-center gap-2 rounded-lg border border-blue-100 bg-blue-50/60 px-3 py-2" aria-label="Active operation view">
+                  <span className="font-mono text-[9px] font-bold uppercase tracking-[0.08em] text-blue-700">Focused view</span>
+                  {operationModel ? <ActiveViewChip label={`Model: ${operationModel}`} onRemove={() => { setOperationModel(null); setOperationPage(1); }} /> : null}
+                  {operationFailure ? <ActiveViewChip label={`Failure: ${operationFailure.replaceAll("_", " ")}`} onRemove={() => { setOperationFailure(null); setOperationPage(1); }} /> : null}
+                  {operationQuery ? <ActiveViewChip label={`Search: ${operationQuery}`} onRemove={() => { setOperationQuery(""); setOperationPage(1); }} /> : null}
+                  {operationSort !== "newest" ? <ActiveViewChip label={operationSortOptions.find((option) => option.value === operationSort)?.label ?? operationSort} onRemove={() => { setOperationSort("newest"); setOperationPage(1); }} /> : null}
+                  <button type="button" onClick={clearOperationView} className="ml-auto text-[10px] font-semibold text-blue-700 underline-offset-2 hover:underline">Clear all</button>
+                </div>
+              ) : null}
               {operationPagination.rows.length === 0 ? (
-                <EmptyState text={operationFilter === "all" ? "The pipeline is connected. Trigger an AI operation in the source application to populate this table." : `No ${operationFilter} operations are available in the retained sample for this range.`} />
+                <EmptyState text={hasFocusedOperationView ? "No retained operation matches this view. Clear a filter or choose another analysis window." : "The pipeline is connected. Trigger an AI operation in the source application to populate this table."} />
               ) : (
                 <>
                   <div className="overflow-x-auto">
-                    <table className="w-full min-w-[1020px] text-left">
+                    <table className="w-full min-w-[1060px] text-left">
                       <thead><tr className="border-b border-[var(--border)] font-mono text-[9px] uppercase tracking-[0.08em] text-[var(--mute)]"><th className="pb-3 font-semibold">Operation</th><th className="pb-3 font-semibold">Status</th><th className="pb-3 font-semibold">Model class</th><th className="pb-3 font-semibold">Failure</th><th className="pb-3 font-semibold">Duration</th><th className="pb-3 font-semibold">Attempts</th><th className="pb-3 text-right font-semibold">Seen</th><th className="pb-3 text-right font-semibold">Trace</th></tr></thead>
                       <tbody className="divide-y divide-[var(--border-soft)]">
                         {operationPagination.rows.map((operation) => (
-                          <tr key={operation.operationId} className="text-xs transition-colors hover:bg-[var(--surface-mute)]">
-                            <td className="py-3.5"><p className="max-w-[180px] truncate font-mono text-[10px] font-semibold text-[var(--text-strong)]">{operation.operationId}</p><p className="mt-1 text-[10px] text-[var(--text-dim)]">{operation.service} · {operation.environment}</p></td>
+                          <tr key={operation.operationId} className={`text-xs transition-colors hover:bg-[var(--surface-mute)] ${selectedOperationId === operation.operationId ? "bg-blue-50/70" : ""}`}>
+                            <td className="py-3.5">
+                              <div className="flex max-w-[210px] items-center gap-1">
+                                <p className="min-w-0 flex-1 truncate font-mono text-[10px] font-semibold text-[var(--text-strong)]" title={operation.operationId}>{operation.operationId}</p>
+                                <button type="button" onClick={() => void copyText(operation.operationId, "Operation ID copied")} className="grid size-7 shrink-0 place-items-center rounded-md text-[var(--mute)] opacity-70 transition hover:bg-white hover:text-[var(--accent)] hover:opacity-100 focus-visible:opacity-100" aria-label={`Copy operation ID ${operation.operationId}`} title="Copy operation ID"><Copy className="size-3.5" /></button>
+                              </div>
+                              <p className="mt-1 text-[10px] text-[var(--text-dim)]">{operation.service} · {operation.environment}</p>
+                            </td>
                             <td className="py-3.5"><span className={`rounded-full px-2 py-1 text-[10px] font-bold ring-1 ${statusTone(operation.status)}`}>{operation.status}</span></td>
                             <td className="max-w-[180px] py-3.5 text-[var(--text-dim)]"><span className="block truncate" title={operation.logicalModelKey || operation.kind}>{operation.logicalModelKey || operation.kind}</span></td>
                             <td className="py-3.5">
@@ -1121,15 +1559,21 @@ export function LiveCockpit() {
             </Panel>
           </div>
         </section>
-        <footer className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border)] py-5 text-[10px] text-[var(--mute)]"><span>Auto-refreshes every 10 seconds · {snapshot.projection.sourceEventCount} source events · snapshot generated {new Date(snapshot.generatedAt).toLocaleTimeString()}</span><a className="font-semibold hover:text-[var(--accent)]" href="/schemas/ai-telemetry/v1">Canonical schema</a></footer>
+        <footer className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border)] py-5 text-[10px] text-[var(--mute)]"><span>{autoRefreshPaused ? "Auto-refresh paused" : `Next refresh in ${autoRefreshCountdown}s while this tab is visible`} · {snapshot.projection.sourceEventCount} source events · snapshot generated {new Date(snapshot.generatedAt).toLocaleTimeString()}</span><a className="font-semibold hover:text-[var(--accent)]" href="/schemas/ai-telemetry/v1">Canonical schema</a></footer>
       </div>
     </main>
     {selectedOperationId ? (
       <OperationTraceDrawer
         operationId={selectedOperationId}
-        onClose={() => setSelectedOperationId(null)}
+        onClose={closeOperationTrace}
         finalFocus={operationTraceTriggerRef}
       />
+    ) : null}
+    {feedback ? (
+      <div role="status" aria-live="polite" className={`fixed bottom-5 right-5 z-[80] flex max-w-[min(360px,calc(100vw-2.5rem))] items-center gap-2 rounded-xl border bg-white px-4 py-3 text-xs font-semibold shadow-xl ${feedback.tone === "error" ? "border-rose-200 text-rose-700" : "border-emerald-200 text-emerald-700"}`}>
+        {feedback.tone === "error" ? <TriangleAlert className="size-4 shrink-0" /> : <Check className="size-4 shrink-0" />}
+        {feedback.message}
+      </div>
     ) : null}
     </>
   );
@@ -1188,6 +1632,24 @@ function FilterChip({ label, count, active, onClick, tone = "neutral" }: { label
       ? "border-emerald-600 bg-emerald-600 text-white"
       : "border-[var(--accent)] bg-[var(--accent)] text-white";
   return <button type="button" aria-pressed={active} onClick={onClick} className={`rounded-full border px-3 py-1.5 text-[10px] font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] ${active ? activeClass : "border-[var(--border)] bg-white text-[var(--text-dim)] hover:border-[var(--accent)] hover:text-[var(--accent)]"}`}>{label} <span className="ml-1 font-mono opacity-80">{formatNumber(count)}</span></button>;
+}
+
+function ActiveViewChip({ label, onRemove }: { label: string; onRemove: () => void }) {
+  return (
+    <span className="inline-flex max-w-full items-center gap-1 rounded-full border border-blue-200 bg-white py-1 pl-2.5 pr-1 text-[10px] font-semibold text-blue-800">
+      <span className="max-w-[240px] truncate" title={label}>{label}</span>
+      <button type="button" onClick={onRemove} className="grid size-5 shrink-0 place-items-center rounded-full text-blue-500 hover:bg-blue-100 hover:text-blue-800" aria-label={`Remove ${label}`}><X className="size-3" /></button>
+    </span>
+  );
+}
+
+function ShortcutKey({ keys, label }: { keys: string; label: string }) {
+  return (
+    <>
+      <dt><kbd className="inline-flex min-w-7 justify-center rounded-md border border-[var(--border)] bg-[var(--surface-mute)] px-1.5 py-1 font-mono text-[9px] font-bold text-[var(--text-strong)] shadow-sm">{keys}</kbd></dt>
+      <dd>{label}</dd>
+    </>
+  );
 }
 
 function Pagination({ ariaLabel, itemLabel, page, pageCount, pageSize, total, onPageChange }: { ariaLabel: string; itemLabel: string; page: number; pageCount: number; pageSize: number; total: number; onPageChange: (page: number) => void }) {
