@@ -13,6 +13,20 @@ jobs:
       GIT_CONFIG_COUNT: 1
       GIT_CONFIG_KEY_0: init.defaultBranch
       GIT_CONFIG_VALUE_0: main
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: signalops_ci_test
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d signalops_ci_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
 
     steps:
       - name: Checkout
@@ -33,3 +47,9 @@ jobs:
 
       - name: Run quality gate
         run: pnpm check
+
+      - name: Exercise PostgreSQL migrations and RPCs
+        env:
+          SIGNALOPS_POSTGRES_TEST_CONFIRM: signalops_ci_test
+          SIGNALOPS_POSTGRES_TEST_URL: postgresql://postgres:postgres@127.0.0.1:5432/signalops_ci_test
+        run: pnpm test:postgres:v1

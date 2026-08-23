@@ -21,6 +21,7 @@
     "test:ops:v1": "node scripts/test-signalops-ops-v1.mjs",
     "test:auth:v1": "node scripts/test-signalops-auth-v1.mjs",
     "test:production:v1": "node scripts/test-signalops-production-v1.mjs",
+    "test:postgres:v1": "node scripts/test-signalops-postgres-v1.mjs",
     "test:admin:v1": "node scripts/test-signalops-admin-v1.mjs",
     "test:events": "node scripts/test-signalops-events.mjs",
     "test:ingest": "node scripts/test-signalops-ingest.mjs",
@@ -58,6 +59,7 @@
     "babel-plugin-react-compiler": "1.0.0",
     "eslint": "^9",
     "eslint-config-next": "16.2.6",
+    "pg": "8.23.0",
     "shadcn": "^4.19.0",
     "tailwindcss": "^4",
     "typescript": "^5"
