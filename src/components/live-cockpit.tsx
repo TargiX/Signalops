@@ -3,30 +3,53 @@
 import {
   Activity,
   ArrowRight,
+  ArrowUp,
   ArrowUpDown,
+  Bookmark,
+  Braces,
   Check,
+  CheckSquare,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
   Clock3,
+  Command,
   Copy,
   Database,
   DollarSign,
   Download,
   ExternalLink,
+  FileJson,
+  FileText,
   Gauge,
+  GitCompareArrows,
   Keyboard,
+  LayoutPanelTop,
+  ListFilter,
   LogOut,
+  PanelTopClose,
+  PanelTopOpen,
   Pause,
   Play,
   RefreshCw,
+  Rows3,
   Search,
   ShieldCheck,
+  SlidersHorizontal,
+  TableProperties,
   TriangleAlert,
+  WifiOff,
   X,
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
+import {
+  CockpitCommandPalette,
+  type SignalOpsCockpitCommand,
+} from "@/components/cockpit-command-palette";
+import { CockpitWindowPulse } from "@/components/cockpit-window-pulse";
 import {
   LatencyChart,
   PerformanceScatterChart,
@@ -37,24 +60,39 @@ import {
   type ChartTimeBucket,
 } from "@/components/charts";
 import { OperationTraceDrawer } from "@/components/operation-trace-drawer";
-import { dispatchCsvDownload } from "@/lib/csv-download";
+import { dispatchCsvDownload, dispatchTextDownload } from "@/lib/csv-download";
 import type { SignalOpsIncidentV1 } from "@/lib/signalops/v1/incidents";
 import {
   applySignalOpsCockpitViewV1,
   applySignalOpsCockpitRangeV1,
+  buildSignalOpsCockpitBriefV1,
+  buildSignalOpsCockpitJsonExportV1,
   buildSignalOpsOperationsCsvV1,
+  createSignalOpsSavedCockpitViewV1,
   createSignalOpsCockpitShareUrlV1,
+  filterAndSortSignalOpsModelsV1,
   filterAndSortSignalOpsOperationsV1,
+  filterAndSortSignalOpsProvidersV1,
+  listSignalOpsOperationDimensionValuesV1,
+  MAX_SAVED_COCKPIT_VIEWS_V1,
   mergeSignalOpsOperationSamplesV1,
   paginateSignalOpsRowsV1,
+  readSignalOpsSavedCockpitViewsV1,
   readSignalOpsCockpitViewV1,
+  serializeSignalOpsSavedCockpitViewsV1,
+  summarizeSignalOpsTimelineV1,
   type SignalOpsCockpitViewV1,
+  type SignalOpsModelSortV1,
   type SignalOpsOperationFilterV1,
   type SignalOpsOperationSortV1,
+  type SignalOpsOperationTriageV1,
+  type SignalOpsProviderSortV1,
+  type SignalOpsSavedCockpitViewV1,
 } from "@/lib/signalops/v1/cockpit-view";
 import type {
   SignalOpsCurrencyCostV1,
   SignalOpsCoverageMetricV1,
+  SignalOpsOperationSnapshotV1,
   SignalOpsOpsRangeV1,
   SignalOpsOpsSnapshotV1,
   SignalOpsProviderHealthV1,
@@ -102,9 +140,49 @@ const emptySession: SessionResponse = {
 const chartColors = ["#3459df", "#24a17e", "#e6a23c", "#d24b63", "#7b61d1", "#168aad"];
 const MODEL_PAGE_SIZE = 5;
 const PROVIDER_PAGE_SIZE = 5;
-const OPERATION_PAGE_SIZE = 10;
-const AUTO_REFRESH_SECONDS = 10;
+const DEFAULT_OPERATION_PAGE_SIZE = 10;
+const DEFAULT_AUTO_REFRESH_SECONDS = 10;
+const AUTO_REFRESH_OPTIONS = [10, 30, 60] as const;
+const OPERATION_PAGE_SIZE_OPTIONS = [10, 25, 50] as const;
 const cockpitRanges = ["24h", "7d", "30d", "90d"] as const;
+
+type CockpitSectionKey = "trends" | "reliability" | "quality" | "fleet";
+type CockpitDestination = "overview" | CockpitSectionKey | "operations";
+type OperationDensity = "comfortable" | "compact";
+type OperationTimeMode = "relative" | "absolute";
+
+type CockpitPreferences = {
+  collapsed: Record<CockpitSectionKey, boolean>;
+  refreshSeconds: (typeof AUTO_REFRESH_OPTIONS)[number];
+  operationPageSize: (typeof OPERATION_PAGE_SIZE_OPTIONS)[number];
+  density: OperationDensity;
+  timeMode: OperationTimeMode;
+};
+
+const cockpitSections: ReadonlyArray<{
+  key: CockpitSectionKey;
+  label: string;
+}> = [
+  { key: "trends", label: "Trends" },
+  { key: "reliability", label: "Reliability" },
+  { key: "quality", label: "Quality" },
+  { key: "fleet", label: "Fleet" },
+];
+
+const defaultCollapsedSections: Record<CockpitSectionKey, boolean> = {
+  trends: false,
+  reliability: false,
+  quality: false,
+  fleet: false,
+};
+
+const defaultCockpitPreferences: CockpitPreferences = {
+  collapsed: defaultCollapsedSections,
+  refreshSeconds: DEFAULT_AUTO_REFRESH_SECONDS,
+  operationPageSize: DEFAULT_OPERATION_PAGE_SIZE,
+  density: "comfortable",
+  timeMode: "relative",
+};
 
 const operationSortOptions: ReadonlyArray<{
   value: SignalOpsOperationSortV1;
@@ -114,6 +192,38 @@ const operationSortOptions: ReadonlyArray<{
   { value: "attention", label: "Attention first" },
   { value: "slowest", label: "Slowest first" },
   { value: "attempts", label: "Most attempts" },
+];
+
+const operationTriageOptions: ReadonlyArray<{
+  value: SignalOpsOperationTriageV1;
+  label: string;
+}> = [
+  { value: "all", label: "All evidence" },
+  { value: "retryable", label: "Retryable failures" },
+  { value: "unclassified", label: "Unclassified failures" },
+  { value: "missing_attempts", label: "Missing attempt evidence" },
+  { value: "multiple_attempts", label: "Multiple attempts" },
+  { value: "slow", label: "At or above window p95" },
+];
+
+const modelSortOptions: ReadonlyArray<{
+  value: SignalOpsModelSortV1;
+  label: string;
+}> = [
+  { value: "volume", label: "Most operations" },
+  { value: "failures", label: "Most failures" },
+  { value: "latency", label: "Slowest p95" },
+  { value: "name", label: "Model name" },
+];
+
+const providerSortOptions: ReadonlyArray<{
+  value: SignalOpsProviderSortV1;
+  label: string;
+}> = [
+  { value: "attention", label: "Needs attention" },
+  { value: "attempts", label: "Most attempts" },
+  { value: "latency", label: "Slowest p95" },
+  { value: "name", label: "Route name" },
 ];
 
 type LoadMode = "initial" | "refresh";
@@ -286,6 +396,88 @@ function isEditableShortcutTarget(target: EventTarget | null): boolean {
   );
 }
 
+function readCockpitPreferences(raw: string | null): CockpitPreferences {
+  if (!raw) return { ...defaultCockpitPreferences, collapsed: { ...defaultCollapsedSections } };
+  try {
+    const parsed = JSON.parse(raw) as Partial<CockpitPreferences>;
+    const refreshSeconds = AUTO_REFRESH_OPTIONS.includes(
+      parsed.refreshSeconds as (typeof AUTO_REFRESH_OPTIONS)[number],
+    )
+      ? (parsed.refreshSeconds as CockpitPreferences["refreshSeconds"])
+      : defaultCockpitPreferences.refreshSeconds;
+    const operationPageSize = OPERATION_PAGE_SIZE_OPTIONS.includes(
+      parsed.operationPageSize as (typeof OPERATION_PAGE_SIZE_OPTIONS)[number],
+    )
+      ? (parsed.operationPageSize as CockpitPreferences["operationPageSize"])
+      : defaultCockpitPreferences.operationPageSize;
+    const collapsedCandidate = parsed.collapsed;
+    return {
+      collapsed: Object.fromEntries(
+        cockpitSections.map(({ key }) => [
+          key,
+          typeof collapsedCandidate?.[key] === "boolean"
+            ? collapsedCandidate[key]
+            : false,
+        ]),
+      ) as Record<CockpitSectionKey, boolean>,
+      refreshSeconds,
+      operationPageSize,
+      density:
+        parsed.density === "compact" || parsed.density === "comfortable"
+          ? parsed.density
+          : defaultCockpitPreferences.density,
+      timeMode:
+        parsed.timeMode === "absolute" || parsed.timeMode === "relative"
+          ? parsed.timeMode
+          : defaultCockpitPreferences.timeMode,
+    };
+  } catch {
+    return { ...defaultCockpitPreferences, collapsed: { ...defaultCollapsedSections } };
+  }
+}
+
+function cockpitPreferencesKey(tenantId: string): string {
+  return `signalops:cockpit:preferences:v1:${tenantId}`;
+}
+
+function cockpitSavedViewsKey(tenantId: string): string {
+  return `signalops:cockpit:saved-views:v1:${tenantId}`;
+}
+
+function getCockpitStorage(): Storage | null {
+  if (typeof Storage === "undefined") return null;
+  try {
+    return window.localStorage ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function absoluteUtcTime(value: string): string {
+  return new Intl.DateTimeFormat("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    timeZone: "UTC",
+    timeZoneName: "short",
+  }).format(new Date(value));
+}
+
+function signedCount(value: number): string {
+  if (value > 0) return `+${formatNumber(value)}`;
+  if (value < 0) return `−${formatNumber(Math.abs(value))}`;
+  return "0";
+}
+
+function createLocalSavedViewId(): string {
+  const uuid = globalThis.crypto?.randomUUID?.();
+  if (uuid) return `view-${uuid.replaceAll("-", "")}`;
+  return `view-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+}
+
 export function LiveCockpit() {
   const [initialView] = useState<SignalOpsCockpitViewV1>(() =>
     typeof window === "undefined"
@@ -311,9 +503,20 @@ export function LiveCockpit() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState("");
   const [autoRefreshPaused, setAutoRefreshPaused] = useState(false);
+  const [autoRefreshSeconds, setAutoRefreshSeconds] = useState<
+    CockpitPreferences["refreshSeconds"]
+  >(DEFAULT_AUTO_REFRESH_SECONDS);
   const [autoRefreshCountdown, setAutoRefreshCountdown] = useState(
-    AUTO_REFRESH_SECONDS,
+    DEFAULT_AUTO_REFRESH_SECONDS,
   );
+  const [isOnline, setIsOnline] = useState(
+    typeof navigator === "undefined" ? true : navigator.onLine,
+  );
+  const [lastRefreshAt, setLastRefreshAt] = useState<number | null>(null);
+  const [refreshDelta, setRefreshDelta] = useState<{
+    operations: number;
+    failed: number;
+  } | null>(null);
   const [operationFilter, setOperationFilter] =
     useState<SignalOpsOperationFilterV1>(initialView.status);
   const [operationQuery, setOperationQuery] = useState("");
@@ -323,15 +526,51 @@ export function LiveCockpit() {
   const [operationFailure, setOperationFailure] = useState<string | null>(
     initialView.failure,
   );
+  const [operationKind, setOperationKind] = useState<string | null>(
+    initialView.kind,
+  );
+  const [operationService, setOperationService] = useState<string | null>(
+    initialView.service,
+  );
+  const [operationEnvironment, setOperationEnvironment] = useState<string | null>(
+    initialView.environment,
+  );
+  const [operationRelease, setOperationRelease] = useState<string | null>(
+    initialView.release,
+  );
+  const [operationTriage, setOperationTriage] =
+    useState<SignalOpsOperationTriageV1>(initialView.triage);
   const [operationSort, setOperationSort] =
     useState<SignalOpsOperationSortV1>(initialView.sort);
   const [operationPage, setOperationPage] = useState(1);
+  const [operationPageSize, setOperationPageSize] = useState<
+    CockpitPreferences["operationPageSize"]
+  >(DEFAULT_OPERATION_PAGE_SIZE);
+  const [operationDensity, setOperationDensity] =
+    useState<OperationDensity>("comfortable");
+  const [operationTimeMode, setOperationTimeMode] =
+    useState<OperationTimeMode>("relative");
+  const [selectedOperationIds, setSelectedOperationIds] = useState<string[]>([]);
+  const [comparisonOpen, setComparisonOpen] = useState(false);
   const [modelPage, setModelPage] = useState(1);
+  const [modelQuery, setModelQuery] = useState("");
+  const [modelSort, setModelSort] = useState<SignalOpsModelSortV1>("volume");
   const [providerPage, setProviderPage] = useState(1);
+  const [providerQuery, setProviderQuery] = useState("");
+  const [providerSort, setProviderSort] =
+    useState<SignalOpsProviderSortV1>("attention");
   const [selectedOperationId, setSelectedOperationId] = useState<string | null>(
     initialView.operationId,
   );
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [collapsedSections, setCollapsedSections] = useState<
+    Record<CockpitSectionKey, boolean>
+  >({ ...defaultCollapsedSections });
+  const [preferencesTenantId, setPreferencesTenantId] = useState<string | null>(null);
+  const [savedViews, setSavedViews] = useState<SignalOpsSavedCockpitViewV1[]>([]);
+  const [sectionJump, setSectionJump] = useState("");
+  const [showBackToTop, setShowBackToTop] = useState(false);
   const [feedback, setFeedback] = useState<{
     message: string;
     tone: "success" | "error";
@@ -339,7 +578,9 @@ export function LiveCockpit() {
   const snapshotRef = useRef<SignalOpsOpsSnapshotV1 | null>(null);
   const activeLoadRef = useRef<AbortController | null>(null);
   const loadSequenceRef = useRef(0);
-  const sloSectionRef = useRef<HTMLElement>(null);
+  const overviewSectionRef = useRef<HTMLElement>(null);
+  const trendsSectionRef = useRef<HTMLElement>(null);
+  const reliabilitySectionRef = useRef<HTMLElement>(null);
   const qualitySectionRef = useRef<HTMLElement>(null);
   const routeSectionRef = useRef<HTMLElement>(null);
   const operationSectionRef = useRef<HTMLDivElement>(null);
@@ -391,9 +632,26 @@ export function LiveCockpit() {
         return;
       }
       if (!snapshotResponse.ok || !snapshotBody.ok) throw new Error("snapshot unavailable");
+      const previousSnapshot = snapshotRef.current;
+      if (
+        mode === "refresh" &&
+        previousSnapshot &&
+        previousSnapshot.range === snapshotBody.snapshot.range
+      ) {
+        const operations =
+          snapshotBody.snapshot.totals.operations -
+          previousSnapshot.totals.operations;
+        const failed =
+          snapshotBody.snapshot.totals.failed -
+          previousSnapshot.totals.failed;
+        setRefreshDelta(operations === 0 && failed === 0 ? null : { operations, failed });
+      } else {
+        setRefreshDelta(null);
+      }
       snapshotRef.current = snapshotBody.snapshot;
       setSnapshot(snapshotBody.snapshot);
       setRange(snapshotBody.snapshot.range);
+      setLastRefreshAt(Date.now());
       replaceCockpitRangeUrl(snapshotBody.snapshot.range);
       setState("ready");
 
@@ -514,8 +772,17 @@ export function LiveCockpit() {
     setOperationQuery("");
     setOperationModel(null);
     setOperationFailure(null);
+    setOperationKind(null);
+    setOperationService(null);
+    setOperationEnvironment(null);
+    setOperationRelease(null);
+    setOperationTriage("all");
     setOperationSort("newest");
     setOperationPage(1);
+    setSelectedOperationIds([]);
+    setComparisonOpen(false);
+    setModelQuery("");
+    setProviderQuery("");
     try {
       const response = await fetch("/api/cockpit/session", {
         method: "POST",
@@ -545,6 +812,13 @@ export function LiveCockpit() {
     setOperationQuery("");
     setOperationModel(null);
     setOperationFailure(null);
+    setOperationKind(null);
+    setOperationService(null);
+    setOperationEnvironment(null);
+    setOperationRelease(null);
+    setOperationTriage("all");
+    setSelectedOperationIds([]);
+    setComparisonOpen(false);
     setState("unauthorized");
     await load(range, "initial");
   }
@@ -556,20 +830,20 @@ export function LiveCockpit() {
     setOperationPage(1);
     setModelPage(1);
     setProviderPage(1);
+    setSelectedOperationIds([]);
+    setComparisonOpen(false);
     void load(value, "refresh");
   }, [load, pendingRange, range]);
-
-  const scrollToSection = useCallback((ref: React.RefObject<HTMLElement | null>) => {
-    window.requestAnimationFrame(() => {
-      ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-      ref.current?.focus({ preventScroll: true });
-    });
-  }, []);
 
   const activateOperationFilter = useCallback((filter: SignalOpsOperationFilterV1) => {
     setOperationFilter(filter);
     setOperationModel(null);
     setOperationFailure(null);
+    setOperationKind(null);
+    setOperationService(null);
+    setOperationEnvironment(null);
+    setOperationRelease(null);
+    setOperationTriage("all");
     setOperationQuery("");
     setOperationPage(1);
     window.requestAnimationFrame(() => {
@@ -589,6 +863,11 @@ export function LiveCockpit() {
     setOperationFilter("all");
     setOperationModel(model);
     setOperationFailure(null);
+    setOperationKind(null);
+    setOperationService(null);
+    setOperationEnvironment(null);
+    setOperationRelease(null);
+    setOperationTriage("all");
     setOperationQuery("");
     setOperationPage(1);
     window.requestAnimationFrame(() => {
@@ -601,6 +880,11 @@ export function LiveCockpit() {
     setOperationFilter("failed");
     setOperationFailure(failure);
     setOperationModel(null);
+    setOperationKind(null);
+    setOperationService(null);
+    setOperationEnvironment(null);
+    setOperationRelease(null);
+    setOperationTriage("all");
     setOperationQuery("");
     setOperationPage(1);
     window.requestAnimationFrame(() => {
@@ -614,8 +898,51 @@ export function LiveCockpit() {
     setOperationQuery("");
     setOperationModel(null);
     setOperationFailure(null);
+    setOperationKind(null);
+    setOperationService(null);
+    setOperationEnvironment(null);
+    setOperationRelease(null);
+    setOperationTriage("all");
     setOperationSort("newest");
     setOperationPage(1);
+  }, []);
+
+  const toggleSection = useCallback((section: CockpitSectionKey) => {
+    setCollapsedSections((current) => ({
+      ...current,
+      [section]: !current[section],
+    }));
+  }, []);
+
+  const setAllSectionsCollapsed = useCallback((collapsed: boolean) => {
+    setCollapsedSections(
+      Object.fromEntries(
+        cockpitSections.map(({ key }) => [key, collapsed]),
+      ) as Record<CockpitSectionKey, boolean>,
+    );
+  }, []);
+
+  const jumpToSection = useCallback((destination: CockpitDestination) => {
+    const ref = destination === "overview"
+      ? overviewSectionRef
+      : destination === "trends"
+        ? trendsSectionRef
+        : destination === "reliability"
+          ? reliabilitySectionRef
+          : destination === "quality"
+            ? qualitySectionRef
+            : destination === "fleet"
+              ? routeSectionRef
+              : operationSectionRef;
+    if (destination !== "overview" && destination !== "operations") {
+      setCollapsedSections((current) => ({ ...current, [destination]: false }));
+    }
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+        ref.current?.focus({ preventScroll: true });
+      });
+    });
   }, []);
 
   const openOperationTrace = useCallback((operationId: string, trigger: HTMLElement) => {
@@ -663,6 +990,98 @@ export function LiveCockpit() {
   }, [showFeedback]);
 
   useEffect(() => {
+    const tenantId = snapshot?.tenant.id;
+    if (!tenantId) return;
+    let preferences = defaultCockpitPreferences;
+    let nextSavedViews: SignalOpsSavedCockpitViewV1[] = [];
+    try {
+      const storage = getCockpitStorage();
+      preferences = readCockpitPreferences(
+        storage?.getItem(cockpitPreferencesKey(tenantId)) ?? null,
+      );
+      nextSavedViews = readSignalOpsSavedCockpitViewsV1(
+        storage?.getItem(cockpitSavedViewsKey(tenantId)) ?? null,
+      );
+    } catch {
+      // Browser storage is optional; the cockpit remains fully usable without it.
+    }
+    const applyPreferences = window.setTimeout(() => {
+      setCollapsedSections(preferences.collapsed);
+      setAutoRefreshSeconds(preferences.refreshSeconds);
+      setAutoRefreshCountdown(preferences.refreshSeconds);
+      setOperationPageSize(preferences.operationPageSize);
+      setOperationDensity(preferences.density);
+      setOperationTimeMode(preferences.timeMode);
+      setSavedViews(nextSavedViews);
+      setPreferencesTenantId(tenantId);
+    }, 0);
+    return () => window.clearTimeout(applyPreferences);
+  }, [snapshot?.tenant.id]);
+
+  useEffect(() => {
+    const tenantId = snapshot?.tenant.id;
+    if (!tenantId || preferencesTenantId !== tenantId) return;
+    try {
+      getCockpitStorage()?.setItem(
+        cockpitPreferencesKey(tenantId),
+        JSON.stringify({
+          collapsed: collapsedSections,
+          refreshSeconds: autoRefreshSeconds,
+          operationPageSize,
+          density: operationDensity,
+          timeMode: operationTimeMode,
+        } satisfies CockpitPreferences),
+      );
+    } catch {
+      // Preference persistence is progressive enhancement.
+    }
+  }, [
+    autoRefreshSeconds,
+    collapsedSections,
+    operationDensity,
+    operationPageSize,
+    operationTimeMode,
+    preferencesTenantId,
+    snapshot?.tenant.id,
+  ]);
+
+  useEffect(() => {
+    function handleOnline() {
+      setIsOnline(true);
+      setAutoRefreshCountdown(autoRefreshSeconds);
+      showFeedback("Connection restored · refreshing live evidence");
+      void load(range, "refresh");
+    }
+    function handleOffline() {
+      setIsOnline(false);
+      setAutoRefreshCountdown(autoRefreshSeconds);
+      showFeedback("Offline · showing the last complete snapshot", "error");
+    }
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, [autoRefreshSeconds, load, range, showFeedback]);
+
+  useEffect(() => {
+    let frame = 0;
+    function updateBackToTop() {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        setShowBackToTop(window.scrollY > 640);
+      });
+    }
+    updateBackToTop();
+    window.addEventListener("scroll", updateBackToTop, { passive: true });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("scroll", updateBackToTop);
+    };
+  }, []);
+
+  useEffect(() => {
     return () => {
       if (feedbackTimerRef.current) {
         window.clearTimeout(feedbackTimerRef.current);
@@ -676,14 +1095,24 @@ export function LiveCockpit() {
       status: operationFilter,
       model: operationModel,
       failure: operationFailure,
+      kind: operationKind,
+      service: operationService,
+      environment: operationEnvironment,
+      release: operationRelease,
+      triage: operationTriage,
       sort: operationSort,
       operationId: selectedOperationId,
     });
   }, [
     operationFailure,
     operationFilter,
+    operationKind,
     operationModel,
+    operationEnvironment,
+    operationRelease,
+    operationService,
     operationSort,
+    operationTriage,
     range,
     selectedOperationId,
   ]);
@@ -692,16 +1121,17 @@ export function LiveCockpit() {
     if (
       state !== "ready" ||
       isRefreshing ||
-      autoRefreshPaused
+      autoRefreshPaused ||
+      !isOnline
     ) {
       return;
     }
 
-    let deadline = Date.now() + AUTO_REFRESH_SECONDS * 1_000;
+    let deadline = Date.now() + autoRefreshSeconds * 1_000;
     const tick = () => {
       if (document.visibilityState !== "visible") {
-        deadline = Date.now() + AUTO_REFRESH_SECONDS * 1_000;
-        setAutoRefreshCountdown(AUTO_REFRESH_SECONDS);
+        deadline = Date.now() + autoRefreshSeconds * 1_000;
+        setAutoRefreshCountdown(autoRefreshSeconds);
         return;
       }
       const remaining = Math.max(0, Math.ceil((deadline - Date.now()) / 1_000));
@@ -717,18 +1147,28 @@ export function LiveCockpit() {
       window.clearTimeout(kickoff);
       window.clearInterval(interval);
     };
-  }, [autoRefreshPaused, isRefreshing, load, range, state]);
+  }, [autoRefreshPaused, autoRefreshSeconds, isOnline, isRefreshing, load, range, state]);
 
   useEffect(() => {
     function handleShortcut(event: KeyboardEvent) {
       if (
         state !== "ready" ||
         event.defaultPrevented ||
-        event.metaKey ||
-        event.ctrlKey ||
-        event.altKey ||
         event.repeat
       ) {
+        return;
+      }
+
+      if (
+        (event.metaKey || event.ctrlKey) &&
+        !event.altKey &&
+        event.key.toLocaleLowerCase() === "k"
+      ) {
+        event.preventDefault();
+        setCommandPaletteOpen(true);
+        return;
+      }
+      if (event.metaKey || event.ctrlKey || event.altKey || commandPaletteOpen) {
         return;
       }
 
@@ -763,6 +1203,7 @@ export function LiveCockpit() {
     return () => window.removeEventListener("keydown", handleShortcut);
   }, [
     activateOperationFilter,
+    commandPaletteOpen,
     focusOperationSearch,
     isRefreshing,
     load,
@@ -901,6 +1342,8 @@ export function LiveCockpit() {
     );
   }
 
+  const readySnapshot = snapshot;
+
   const qualityIssues =
     snapshot.dataQuality.contradictoryTerminals +
     snapshot.dataQuality.identityCollisions +
@@ -964,6 +1407,22 @@ export function LiveCockpit() {
     snapshot.recentOperations,
     snapshot.recentFailedOperations,
   );
+  const operationKinds = listSignalOpsOperationDimensionValuesV1(
+    retainedOperations,
+    "kind",
+  );
+  const operationServices = listSignalOpsOperationDimensionValuesV1(
+    retainedOperations,
+    "service",
+  );
+  const operationEnvironments = listSignalOpsOperationDimensionValuesV1(
+    retainedOperations,
+    "environment",
+  );
+  const operationReleases = listSignalOpsOperationDimensionValuesV1(
+    retainedOperations,
+    "release",
+  );
   const filteredOperations = filterAndSortSignalOpsOperationsV1(
     retainedOperations,
     {
@@ -971,21 +1430,37 @@ export function LiveCockpit() {
       query: operationQuery,
       model: operationModel,
       failure: operationFailure,
+      kind: operationKind,
+      service: operationService,
+      environment: operationEnvironment,
+      release: operationRelease,
+      triage: operationTriage,
+      slowThresholdMs: snapshot.totals.p95DurationMs,
       sort: operationSort,
     },
   );
   const operationPagination = paginateSignalOpsRowsV1(
     filteredOperations,
     operationPage,
-    OPERATION_PAGE_SIZE,
+    operationPageSize,
+  );
+  const filteredModels = filterAndSortSignalOpsModelsV1(
+    snapshot.models,
+    modelQuery,
+    modelSort,
   );
   const modelPagination = paginateSignalOpsRowsV1(
-    snapshot.models,
+    filteredModels,
     modelPage,
     MODEL_PAGE_SIZE,
   );
-  const providerPagination = paginateSignalOpsRowsV1(
+  const filteredProviders = filterAndSortSignalOpsProvidersV1(
     snapshot.providers,
+    providerQuery,
+    providerSort,
+  );
+  const providerPagination = paginateSignalOpsRowsV1(
+    filteredProviders,
     providerPage,
     PROVIDER_PAGE_SIZE,
   );
@@ -1000,26 +1475,56 @@ export function LiveCockpit() {
   const unclassifiedFailures = snapshot.failureBreakdown
     .filter((failure) => failure.category === "unknown")
     .reduce((total, failure) => total + failure.operations, 0);
+  const timelinePulse = summarizeSignalOpsTimelineV1(snapshot.timeline);
+  const selectedOperations = retainedOperations.filter((operation) =>
+    selectedOperationIds.includes(operation.operationId),
+  );
+  const currentPageOperationIds = operationPagination.rows.map(
+    (operation) => operation.operationId,
+  );
+  const allCurrentPageSelected =
+    currentPageOperationIds.length > 0 &&
+    currentPageOperationIds.every((operationId) =>
+      selectedOperationIds.includes(operationId),
+    );
+  const someCurrentPageSelected = currentPageOperationIds.some((operationId) =>
+    selectedOperationIds.includes(operationId),
+  );
+  const currentView: SignalOpsCockpitViewV1 = {
+    range,
+    status: operationFilter,
+    model: operationModel,
+    failure: operationFailure,
+    kind: operationKind,
+    service: operationService,
+    environment: operationEnvironment,
+    release: operationRelease,
+    triage: operationTriage,
+    sort: operationSort,
+    operationId: selectedOperationId,
+  };
   const hasFocusedOperationView = Boolean(
     operationQuery ||
       operationModel ||
       operationFailure ||
+      operationKind ||
+      operationService ||
+      operationEnvironment ||
+      operationRelease ||
+      operationTriage !== "all" ||
       operationFilter !== "all" ||
       operationSort !== "newest",
   );
+  const allSectionsCollapsed = cockpitSections.every(
+    ({ key }) => collapsedSections[key],
+  );
+  const operationRowPadding = operationDensity === "compact" ? "py-2" : "py-3.5";
 
   async function copyCockpitView() {
     try {
       const shareUrl = createSignalOpsCockpitShareUrlV1(
         new URL(window.location.href),
-        {
-          range: pendingRange ?? range,
-          status: operationFilter,
-          model: operationModel,
-          failure: operationFailure,
-          sort: operationSort,
-          operationId: selectedOperationId,
-        },
+        currentView,
       );
       await copyText(shareUrl.toString(), "Analysis view copied");
     } catch {
@@ -1041,6 +1546,153 @@ export function LiveCockpit() {
       result.dispatched ? "success" : "error",
     );
   }
+
+  async function copyInvestigationBrief() {
+    const brief = buildSignalOpsCockpitBriefV1(
+      readySnapshot,
+      currentView,
+      filteredOperations.length,
+      retainedOperations.length,
+    );
+    await copyText(brief, "Investigation brief copied");
+  }
+
+  function downloadSnapshotJson() {
+    const json = buildSignalOpsCockpitJsonExportV1(
+      readySnapshot,
+      currentView,
+      filteredOperations,
+    );
+    const date = new Date().toISOString().slice(0, 10);
+    const result = dispatchTextDownload(
+      `signalops-snapshot-${displayedRange}-${date}.json`,
+      json,
+      { mimeType: "application/json;charset=utf-8" },
+    );
+    showFeedback(
+      result.dispatched
+        ? "Privacy-safe JSON snapshot exported"
+        : "JSON export unavailable",
+      result.dispatched ? "success" : "error",
+    );
+  }
+
+  function persistSavedViews(next: SignalOpsSavedCockpitViewV1[]) {
+    setSavedViews(next);
+    try {
+      getCockpitStorage()?.setItem(
+        cockpitSavedViewsKey(readySnapshot.tenant.id),
+        serializeSignalOpsSavedCockpitViewsV1(next),
+      );
+    } catch {
+      // The current in-memory view remains usable when storage is blocked.
+    }
+  }
+
+  function saveCurrentView(name: string): boolean {
+    if (savedViews.length >= MAX_SAVED_COCKPIT_VIEWS_V1) return false;
+    const id = createLocalSavedViewId();
+    const saved = createSignalOpsSavedCockpitViewV1(id, name, currentView);
+    if (!saved) return false;
+    persistSavedViews([saved, ...savedViews]);
+    showFeedback(`Saved view “${saved.name}”`);
+    return true;
+  }
+
+  function applySavedView(saved: SignalOpsSavedCockpitViewV1) {
+    const view = saved.view;
+    setOperationFilter(view.status);
+    setOperationModel(view.model);
+    setOperationFailure(view.failure);
+    setOperationKind(view.kind);
+    setOperationService(view.service);
+    setOperationEnvironment(view.environment);
+    setOperationRelease(view.release);
+    setOperationTriage(view.triage);
+    setOperationSort(view.sort);
+    setOperationQuery("");
+    setSelectedOperationId(null);
+    setSelectedOperationIds([]);
+    setComparisonOpen(false);
+    setOperationPage(1);
+    if (view.range !== range) selectRange(view.range);
+    window.requestAnimationFrame(() => jumpToSection("operations"));
+    showFeedback(`Opened saved view “${saved.name}”`);
+  }
+
+  function deleteSavedView(id: string) {
+    const removed = savedViews.find((view) => view.id === id);
+    persistSavedViews(savedViews.filter((view) => view.id !== id));
+    if (removed) showFeedback(`Deleted saved view “${removed.name}”`);
+  }
+
+  function toggleOperationSelection(operationId: string) {
+    setSelectedOperationIds((current) =>
+      current.includes(operationId)
+        ? current.filter((id) => id !== operationId)
+        : [...current, operationId],
+    );
+  }
+
+  function toggleCurrentPageSelection() {
+    setSelectedOperationIds((current) => {
+      if (allCurrentPageSelected) {
+        return current.filter((id) => !currentPageOperationIds.includes(id));
+      }
+      return [...new Set([...current, ...currentPageOperationIds])];
+    });
+  }
+
+  function openComparison() {
+    if (selectedOperations.length < 2) {
+      showFeedback("Select at least two retained operations to compare", "error");
+      return;
+    }
+    if (selectedOperations.length > 6) {
+      showFeedback("Compare supports up to six operations at once", "error");
+      return;
+    }
+    setComparisonOpen(true);
+  }
+
+  async function copySelectedOperationIds() {
+    await copyText(
+      selectedOperations.map((operation) => operation.operationId).join("\n"),
+      `${formatNumber(selectedOperations.length)} operation ID${selectedOperations.length === 1 ? "" : "s"} copied`,
+    );
+  }
+
+  function downloadSelectedOperationsCsv() {
+    const date = new Date().toISOString().slice(0, 10);
+    const result = dispatchCsvDownload(
+      `signalops-selected-operations-${date}.csv`,
+      buildSignalOpsOperationsCsvV1(selectedOperations),
+    );
+    showFeedback(
+      result.dispatched
+        ? `${formatNumber(selectedOperations.length)} selected operation${selectedOperations.length === 1 ? "" : "s"} exported`
+        : "Selected CSV export unavailable",
+      result.dispatched ? "success" : "error",
+    );
+  }
+
+  const cockpitCommands: SignalOpsCockpitCommand[] = [
+    { id: "go-overview", label: "Go to overview", description: "Jump to live totals and the selected window", keywords: ["top", "metrics"], icon: Activity, run: () => jumpToSection("overview") },
+    { id: "go-trends", label: "Go to trends", description: "Open charts, equal-window pulse, and timeline evidence", keywords: ["charts", "timeline"], icon: ArrowUpDown, run: () => jumpToSection("trends") },
+    { id: "go-reliability", label: "Go to reliability", description: "Inspect SLO evaluations and active incidents", keywords: ["slo", "incident"], icon: Gauge, run: () => jumpToSection("reliability") },
+    { id: "go-quality", label: "Go to telemetry quality", description: "Inspect evidence coverage and failure classification", keywords: ["coverage", "instrumentation"], icon: ShieldCheck, run: () => jumpToSection("quality") },
+    { id: "go-fleet", label: "Go to provider and model fleet", description: "Search and sort explicit routes and logical models", keywords: ["provider", "route", "model"], icon: LayoutPanelTop, run: () => jumpToSection("fleet") },
+    { id: "go-operations", label: "Go to operations explorer", description: "Search, triage, compare, and inspect retained rows", keywords: ["trace", "rows"], icon: TableProperties, run: () => jumpToSection("operations") },
+    { id: "filter-failed", label: "Show failed operations", description: "Reset to the retained failed-operation view", keywords: ["failure", "error"], icon: TriangleAlert, run: () => activateOperationFilter("failed") },
+    { id: "filter-retryable", label: "Show retryable failures", description: "Apply the retryable triage preset", keywords: ["triage", "retry"], icon: RefreshCw, run: () => { setOperationFilter("failed"); setOperationTriage("retryable"); setOperationPage(1); jumpToSection("operations"); } },
+    { id: "clear-view", label: "Clear operation filters", description: "Return the explorer to newest retained operations", keywords: ["reset"], icon: X, run: () => { clearOperationView(); jumpToSection("operations"); } },
+    { id: "refresh", label: "Refresh live evidence", description: "Request a fresh canonical snapshot now", keywords: ["reload"], icon: RefreshCw, run: () => void load(range, "refresh") },
+    { id: "toggle-refresh", label: autoRefreshPaused ? "Resume auto-refresh" : "Pause auto-refresh", description: `Current cadence is ${autoRefreshSeconds} seconds`, keywords: ["polling", "live"], icon: autoRefreshPaused ? Play : Pause, run: () => { setAutoRefreshPaused((paused) => !paused); setAutoRefreshCountdown(autoRefreshSeconds); } },
+    { id: "copy-brief", label: "Copy investigation brief", description: "Copy a privacy-safe Markdown handoff", keywords: ["markdown", "handoff"], icon: FileText, run: () => void copyInvestigationBrief() },
+    { id: "export-json", label: "Export JSON snapshot", description: "Download canonical aggregates and current retained matches", keywords: ["download", "evidence"], icon: FileJson, run: downloadSnapshotJson },
+    { id: "expand-sections", label: "Expand all analytical sections", description: "Show trends, reliability, quality, and fleet", keywords: ["layout"], icon: PanelTopOpen, run: () => setAllSectionsCollapsed(false) },
+    { id: "collapse-sections", label: "Collapse all analytical sections", description: "Keep the operations explorer in focus", keywords: ["layout", "compact"], icon: PanelTopClose, run: () => setAllSectionsCollapsed(true) },
+  ];
   return (
     <>
     <a
@@ -1077,12 +1729,13 @@ export function LiveCockpit() {
           </div>
         </header>
 
-        <section className="mt-7">
+        <section id="overview" ref={overviewSectionRef} tabIndex={-1} className="mt-7 scroll-mt-24 outline-none">
           <div>
             <p className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--accent)]">Canonical AI telemetry v1</p>
             <h1 className="mt-2 text-3xl font-semibold tracking-tight text-[var(--text-strong)] sm:text-4xl">Generation operations</h1>
             <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-[var(--text-dim)]">
-              <span className="inline-flex items-center gap-1.5"><span className="size-1.5 rounded-full bg-emerald-500" /> Last signal {relativeTime(snapshot.freshness.lastReceivedAt)}</span>
+              <span className="inline-flex items-center gap-1.5"><span className={`size-1.5 rounded-full ${isOnline ? "bg-emerald-500" : "bg-rose-500"}`} /> {isOnline ? `Last signal ${relativeTime(snapshot.freshness.lastReceivedAt)}` : "Offline · last complete snapshot"}</span>
+              {lastRefreshAt ? <span title={new Date(lastRefreshAt).toISOString()}>Refreshed {new Date(lastRefreshAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span> : null}
               <span className="rounded-full border border-[var(--border)] bg-white px-2 py-0.5 font-mono text-[10px]">{snapshot.projection.materialized ? "materialized" : "live projection"}</span>
               {snapshot.environments.map((environment) => <span key={environment} className="rounded-full border border-[var(--border)] bg-white px-2 py-0.5 font-mono text-[10px]">{environment}</span>)}
             </div>
@@ -1095,8 +1748,9 @@ export function LiveCockpit() {
           className="sticky top-2 z-30 mt-5"
         >
           <div ref={shortcutHelpRef} className="relative rounded-xl border border-white/80 bg-white/90 p-1.5 shadow-[0_10px_32px_rgba(34,55,105,0.14)] ring-1 ring-[var(--border)] backdrop-blur-xl">
-            <div className="flex min-h-11 items-center gap-2 overflow-x-auto px-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-              <span className="shrink-0 pl-1 font-mono text-[9px] font-bold uppercase tracking-[0.1em] text-[var(--mute)]">Window</span>
+            <div className="flex min-h-11 items-center gap-2 px-1">
+              <div className="flex shrink-0 items-center gap-2">
+              <span className="hidden shrink-0 pl-1 font-mono text-[9px] font-bold uppercase tracking-[0.1em] text-[var(--mute)] sm:inline">Window</span>
               <div className="flex shrink-0 rounded-lg bg-[var(--surface-mute)] p-1" aria-label="Analysis window">
                 {cockpitRanges.map((value) => {
                   const selectedRange = pendingRange ?? range;
@@ -1106,41 +1760,87 @@ export function LiveCockpit() {
                       type="button"
                       aria-pressed={selectedRange === value}
                       onClick={() => selectRange(value)}
-                      className={`rounded-md px-2.5 py-1.5 text-[10px] font-semibold transition ${selectedRange === value ? "bg-[var(--accent)] text-white shadow-sm" : "text-[var(--text-dim)] hover:bg-white hover:text-[var(--text)]"}`}
+                      className={`rounded-md px-2 py-1.5 text-[10px] font-semibold transition sm:px-2.5 ${selectedRange === value ? "bg-[var(--accent)] text-white shadow-sm" : "text-[var(--text-dim)] hover:bg-white hover:text-[var(--text)]"}`}
                     >
                       {value}
                     </button>
                   );
                 })}
               </div>
+              </div>
+              <div className="min-w-0 flex-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              <div className="flex min-w-max items-center gap-2 pr-1">
               <span className="mx-1 h-6 w-px shrink-0 bg-[var(--border)]" />
-              <div aria-live="polite" className={`flex shrink-0 items-center gap-2 rounded-lg px-2.5 py-1.5 text-[10px] font-semibold ${refreshError ? "bg-rose-50 text-rose-700" : "text-[var(--text-dim)]"}`}>
-                <RefreshCw className={`size-3.5 ${isRefreshing ? "animate-spin text-[var(--accent)]" : refreshError ? "text-rose-600" : "text-emerald-600"}`} />
+              <label className="relative shrink-0">
+                <span className="sr-only">Jump to cockpit section</span>
+                <ListFilter className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-[var(--mute)]" />
+                <select
+                  value={sectionJump}
+                  onChange={(event) => {
+                    const destination = event.target.value as CockpitDestination;
+                    setSectionJump(destination);
+                    if (destination) jumpToSection(destination);
+                    window.setTimeout(() => setSectionJump(""), 0);
+                  }}
+                  className="h-8 appearance-none rounded-lg border border-[var(--border)] bg-white pl-8 pr-7 text-[10px] font-semibold text-[var(--text-dim)]"
+                >
+                  <option value="">Jump to…</option>
+                  <option value="overview">Overview</option>
+                  <option value="trends">Trends</option>
+                  <option value="reliability">Reliability</option>
+                  <option value="quality">Telemetry quality</option>
+                  <option value="fleet">Provider and model fleet</option>
+                  <option value="operations">Operations explorer</option>
+                </select>
+              </label>
+              <div aria-live="polite" aria-atomic="true" className={`flex shrink-0 items-center gap-2 rounded-lg px-2.5 py-1.5 text-[10px] font-semibold ${!isOnline || refreshError ? "bg-rose-50 text-rose-700" : refreshDelta ? "bg-blue-50 text-blue-800" : "text-[var(--text-dim)]"}`}>
+                {!isOnline ? <WifiOff className="size-3.5" /> : <RefreshCw className={`size-3.5 ${isRefreshing ? "animate-spin text-[var(--accent)]" : refreshError ? "text-rose-600" : "text-emerald-600"}`} />}
                 {pendingRange
                   ? `Updating to ${pendingRange} · showing ${displayedRange}`
-                  : refreshError || `${formatNumber(snapshot.totals.operations)} ops · ${formatNumber(snapshot.totals.failed)} failed · p95 ${formatDuration(snapshot.totals.p95DurationMs)}`}
+                  : !isOnline
+                    ? "Offline · snapshot retained"
+                    : refreshError || (refreshDelta
+                        ? `${signedCount(refreshDelta.operations)} ops · ${signedCount(refreshDelta.failed)} failed vs prior snapshot`
+                        : `${formatNumber(snapshot.totals.operations)} ops · ${formatNumber(snapshot.totals.failed)} failed · p95 ${formatDuration(snapshot.totals.p95DurationMs)}`)}
               </div>
+              <label className="relative shrink-0">
+                <span className="sr-only">Auto-refresh interval</span>
+                <select
+                  value={autoRefreshSeconds}
+                  onChange={(event) => {
+                    const seconds = Number(event.target.value) as CockpitPreferences["refreshSeconds"];
+                    setAutoRefreshSeconds(seconds);
+                    setAutoRefreshCountdown(seconds);
+                  }}
+                  className="h-8 appearance-none rounded-lg border border-[var(--border)] bg-white pl-2.5 pr-7 text-[10px] font-semibold text-[var(--text-dim)]"
+                >
+                  {AUTO_REFRESH_OPTIONS.map((seconds) => <option key={seconds} value={seconds}>Every {seconds}s</option>)}
+                </select>
+              </label>
               <button
                 type="button"
                 aria-pressed={autoRefreshPaused}
-                aria-label={autoRefreshPaused ? "Paused. Resume auto-refresh" : `Auto ${autoRefreshCountdown}s. Pause auto-refresh`}
+                aria-label={!isOnline ? "Offline. Auto-refresh will resume when connected" : autoRefreshPaused ? "Paused. Resume auto-refresh" : `Auto ${autoRefreshCountdown}s. Pause auto-refresh`}
                 title={autoRefreshPaused ? "Resume auto-refresh" : "Pause auto-refresh"}
+                disabled={!isOnline}
                 onClick={() => {
                   setAutoRefreshPaused((paused) => !paused);
-                  setAutoRefreshCountdown(AUTO_REFRESH_SECONDS);
+                  setAutoRefreshCountdown(autoRefreshSeconds);
                 }}
-                className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border px-2.5 text-[10px] font-semibold transition ${autoRefreshPaused ? "border-amber-200 bg-amber-50 text-amber-800" : "border-[var(--border)] bg-white text-[var(--text-dim)] hover:border-[var(--accent)] hover:text-[var(--accent)]"}`}
+                className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border px-2.5 text-[10px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-55 ${autoRefreshPaused ? "border-amber-200 bg-amber-50 text-amber-800" : "border-[var(--border)] bg-white text-[var(--text-dim)] hover:border-[var(--accent)] hover:text-[var(--accent)]"}`}
               >
-                {autoRefreshPaused ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}
-                {autoRefreshPaused ? "Paused" : `Auto ${autoRefreshCountdown}s`}
+                {!isOnline ? <WifiOff className="size-3.5" /> : autoRefreshPaused ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}
+                {!isOnline ? "Offline" : autoRefreshPaused ? "Paused" : `Auto ${autoRefreshCountdown}s`}
               </button>
               <span className="mx-1 h-6 w-px shrink-0 bg-[var(--border)]" />
               <button type="button" onClick={() => activateOperationFilter("failed")} className="shrink-0 rounded-lg px-2.5 py-1.5 text-[10px] font-semibold text-rose-700 transition hover:bg-rose-50">Failures <span className="ml-1 font-mono">{formatNumber(snapshot.totals.failed)}</span></button>
-              <button type="button" onClick={() => scrollToSection(qualitySectionRef)} className="shrink-0 rounded-lg px-2.5 py-1.5 text-[10px] font-semibold text-[var(--text-dim)] transition hover:bg-[var(--surface-mute)] hover:text-[var(--accent)]">Coverage <span className="ml-1 font-mono">{formatPercent(attemptCoverage)}</span></button>
-              <button type="button" onClick={() => scrollToSection(routeSectionRef)} className="shrink-0 rounded-lg px-2.5 py-1.5 text-[10px] font-semibold text-[var(--text-dim)] transition hover:bg-[var(--surface-mute)] hover:text-[var(--accent)]">Routes <span className="ml-1 font-mono">{formatNumber(snapshot.providers.length)}</span></button>
-              {sloEvaluations.length > 0 ? <button type="button" onClick={() => scrollToSection(sloSectionRef)} className="shrink-0 rounded-lg px-2.5 py-1.5 text-[10px] font-semibold text-[var(--text-dim)] transition hover:bg-[var(--surface-mute)] hover:text-[var(--accent)]">SLOs <span className="ml-1 font-mono">{formatNumber(sloEvaluations.filter((evaluation) => evaluation.status === "breached").length)}</span></button> : null}
+              <button type="button" onClick={() => jumpToSection("quality")} className="shrink-0 rounded-lg px-2.5 py-1.5 text-[10px] font-semibold text-[var(--text-dim)] transition hover:bg-[var(--surface-mute)] hover:text-[var(--accent)]">Coverage <span className="ml-1 font-mono">{formatPercent(attemptCoverage)}</span></button>
+              <button type="button" onClick={() => jumpToSection("fleet")} className="shrink-0 rounded-lg px-2.5 py-1.5 text-[10px] font-semibold text-[var(--text-dim)] transition hover:bg-[var(--surface-mute)] hover:text-[var(--accent)]">Routes <span className="ml-1 font-mono">{formatNumber(snapshot.providers.length)}</span></button>
+              {sloEvaluations.length > 0 ? <button type="button" onClick={() => jumpToSection("reliability")} className="shrink-0 rounded-lg px-2.5 py-1.5 text-[10px] font-semibold text-[var(--text-dim)] transition hover:bg-[var(--surface-mute)] hover:text-[var(--accent)]">SLOs <span className="ml-1 font-mono">{formatNumber(sloEvaluations.filter((evaluation) => evaluation.status === "breached").length)}</span></button> : null}
               <button type="button" onClick={() => activateOperationFilter("all")} className="shrink-0 rounded-lg px-2.5 py-1.5 text-[10px] font-semibold text-[var(--text-dim)] transition hover:bg-[var(--surface-mute)] hover:text-[var(--accent)]">Operations</button>
+              <button type="button" onClick={() => setAllSectionsCollapsed(!allSectionsCollapsed)} className="grid size-8 shrink-0 place-items-center rounded-lg border border-[var(--border)] bg-white text-[var(--text-dim)] transition hover:border-[var(--accent)] hover:text-[var(--accent)]" aria-label={allSectionsCollapsed ? "Expand analytical sections" : "Collapse analytical sections"} title={allSectionsCollapsed ? "Expand analytical sections" : "Collapse analytical sections"}>{allSectionsCollapsed ? <PanelTopOpen className="size-3.5" /> : <PanelTopClose className="size-3.5" />}</button>
               <button type="button" onClick={() => void copyCockpitView()} className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-[var(--border)] bg-white px-2.5 text-[10px] font-semibold text-[var(--text-dim)] transition hover:border-[var(--accent)] hover:text-[var(--accent)]" title="Copy a privacy-safe link to this analysis view"><Copy className="size-3.5" /> Copy view</button>
+              <button type="button" onClick={() => setCommandPaletteOpen(true)} aria-keyshortcuts="Meta+K Control+K" className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-[var(--border)] bg-white px-2.5 text-[10px] font-semibold text-[var(--text-dim)] transition hover:border-[var(--accent)] hover:text-[var(--accent)]" title="Open command cockpit (Cmd/Ctrl+K)"><Command className="size-3.5" /> Commands <kbd className="font-mono text-[8px] text-[var(--mute)]">⌘K</kbd>{savedViews.length > 0 ? <span className="rounded-full bg-[var(--accent-soft)] px-1.5 text-[8px] text-[var(--accent)]">{savedViews.length}</span> : null}</button>
               <button
                 type="button"
                 aria-expanded={shortcutHelpOpen}
@@ -1153,6 +1853,8 @@ export function LiveCockpit() {
                 <Keyboard className="size-3.5" />
               </button>
               <button type="button" onClick={() => void load(range, "refresh")} disabled={isRefreshing} className="ml-auto grid size-8 shrink-0 place-items-center rounded-lg border border-[var(--border)] bg-white text-[var(--text-dim)] transition hover:border-[var(--accent)] hover:text-[var(--accent)] disabled:opacity-50" aria-label="Refresh analysis"><RefreshCw className={`size-3.5 ${isRefreshing ? "animate-spin" : ""}`} /></button>
+              </div>
+              </div>
             </div>
             {shortcutHelpOpen ? (
               <div id="cockpit-shortcuts" role="dialog" aria-label="Keyboard shortcuts" className="absolute right-0 top-[calc(100%+0.5rem)] z-50 w-[280px] rounded-xl border border-[var(--border)] bg-white p-4 shadow-xl">
@@ -1161,6 +1863,7 @@ export function LiveCockpit() {
                   <button type="button" onClick={() => setShortcutHelpOpen(false)} className="grid size-7 place-items-center rounded-md text-[var(--mute)] hover:bg-[var(--surface-mute)] hover:text-[var(--text)]" aria-label="Close shortcuts"><X className="size-3.5" /></button>
                 </div>
                 <dl className="mt-3 grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-2 text-[10px] text-[var(--text-dim)]">
+                  <ShortcutKey keys="⌘K" label="Open the command cockpit" />
                   <ShortcutKey keys="/" label="Search retained operations" />
                   <ShortcutKey keys="F" label="Show failed operations" />
                   <ShortcutKey keys="R" label="Refresh the snapshot" />
@@ -1183,13 +1886,22 @@ export function LiveCockpit() {
         <section className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
           <Metric icon={Database} label="Operations" value={formatNumber(snapshot.totals.operations)} detail="Inspect latest operations →" active={operationFilter === "all"} onClick={() => activateOperationFilter("all")} />
           <Metric icon={CheckCircle2} label="Succeeded" value={formatNumber(snapshot.totals.succeeded)} detail={`${formatPercent(snapshot.totals.successRate)} success rate →`} tone="good" active={operationFilter === "succeeded"} onClick={() => activateOperationFilter("succeeded")} />
-          <Metric icon={TriangleAlert} label="Failed" value={formatNumber(snapshot.totals.failed)} detail={`${formatNumber(snapshot.totals.retryableFailures)} retryable · inspect →`} tone="bad" active={operationFilter === "failed"} onClick={() => activateOperationFilter("failed")} />
+          <Metric icon={TriangleAlert} label="Failed" value={formatNumber(snapshot.totals.failed)} detail={`${formatNumber(snapshot.totals.retryableFailures)} retryable attempts · inspect →`} tone="bad" active={operationFilter === "failed"} onClick={() => activateOperationFilter("failed")} />
           <Metric icon={Clock3} label="Operation p95" value={formatDuration(snapshot.totals.p95DurationMs)} detail="terminal duration" />
           <Metric icon={Activity} label="Provider coverage" value={formatPercent(attemptCoverage)} detail={`${formatNumber(snapshot.totals.operationsWithAttemptTelemetry)} / ${formatNumber(snapshot.totals.operations)} operations`} tone="warn" />
           <Metric icon={DollarSign} label="Reported cost" value={costSummary(snapshot.totals.costByCurrency, "reported")} detail={`${costSummary(snapshot.totals.costByCurrency, "estimated")} estimated`} />
         </section>
 
-        <section className="mt-6 grid gap-4 xl:grid-cols-[1.35fr_0.9fr]">
+        <AnalysisGroup
+          id="trends"
+          sectionRef={trendsSectionRef}
+          icon={ArrowUpDown}
+          title="Trends and window evidence"
+          subtitle="Canonical buckets, equal-duration movement, latency tail, traffic, and cost evidence"
+          collapsed={collapsedSections.trends}
+          onToggle={() => toggleSection("trends")}
+        >
+        <section className="mt-4 grid gap-4 xl:grid-cols-[1.35fr_0.9fr]">
           <Panel title="Throughput" subtitle={`${displayedRange} operation volume vs failures`}>
             {hasTimelineVolume ? (
               <ThroughputChart data={timelineData} />
@@ -1242,8 +1954,24 @@ export function LiveCockpit() {
           </Panel>
         </section>
 
+        <CockpitWindowPulse
+          range={displayedRange}
+          timeline={snapshot.timeline}
+          pulse={timelinePulse}
+        />
+        </AnalysisGroup>
+
+        <AnalysisGroup
+          id="reliability"
+          sectionRef={reliabilitySectionRef}
+          icon={Gauge}
+          title="Reliability and incidents"
+          subtitle="Versioned objectives and stable policy-derived operational conditions"
+          collapsed={collapsedSections.reliability}
+          onToggle={() => toggleSection("reliability")}
+        >
         {sloEvaluations.length > 0 ? (
-          <section ref={sloSectionRef} tabIndex={-1} className="mt-6 scroll-mt-24 rounded-xl border border-[var(--border)] bg-white p-5 shadow-[var(--shadow-1)] outline-none sm:p-6">
+          <section className="mt-6 rounded-xl border border-[var(--border)] bg-white p-5 shadow-[var(--shadow-1)] sm:p-6">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h2 className="flex items-center gap-2 text-sm font-semibold text-[var(--text-strong)]"><Gauge className="size-4 text-[var(--accent)]" /> Reliability objectives</h2>
@@ -1290,7 +2018,21 @@ export function LiveCockpit() {
           </section>
         ) : null}
 
-        <section ref={qualitySectionRef} tabIndex={-1} className="mt-6 grid scroll-mt-24 items-start gap-5 outline-none xl:grid-cols-[1.25fr_0.75fr]">
+        {sloEvaluations.length === 0 && incidents.length === 0 ? (
+          <div className="mt-4"><EmptyState text="Reliability policies and active incidents will appear after this workspace configures its first SLO policy." /></div>
+        ) : null}
+        </AnalysisGroup>
+
+        <AnalysisGroup
+          id="quality"
+          sectionRef={qualitySectionRef}
+          icon={ShieldCheck}
+          title="Telemetry quality"
+          subtitle="Measured evidence coverage and normalized failure intelligence"
+          collapsed={collapsedSections.quality}
+          onToggle={() => toggleSection("quality")}
+        >
+        <section className="mt-4 grid items-start gap-5 xl:grid-cols-[1.25fr_0.75fr]">
           <Panel
             title="Instrumentation quality"
             subtitle="Measured canonical evidence coverage; missing facts are never inferred"
@@ -1355,7 +2097,18 @@ export function LiveCockpit() {
           </Panel>
         </section>
 
-        <section ref={routeSectionRef} tabIndex={-1} className="mt-6 grid scroll-mt-24 items-start gap-5 outline-none lg:grid-cols-2">
+        </AnalysisGroup>
+
+        <AnalysisGroup
+          id="fleet"
+          sectionRef={routeSectionRef}
+          icon={LayoutPanelTop}
+          title="Provider and model fleet"
+          subtitle="Explicit attempt routes and logical model classes; no route inference"
+          collapsed={collapsedSections.fleet}
+          onToggle={() => toggleSection("fleet")}
+        >
+        <section className="mt-4 grid items-start gap-5 lg:grid-cols-2">
           <Panel
             title="Provider route health"
             subtitle={`${formatNumber(snapshot.totals.operationsWithAttemptTelemetry)} of ${formatNumber(snapshot.totals.operations)} operations include explicit attempt telemetry`}
@@ -1375,9 +2128,22 @@ export function LiveCockpit() {
                 Route health uses explicit attempt start and terminal facts only. Logical model names are never guessed into provider routes.
               </p>
             </div>
+            <div className="mb-4 grid gap-2 sm:grid-cols-[1fr_160px]">
+              <label className="relative block">
+                <span className="sr-only">Search provider routes</span>
+                <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-[var(--mute)]" />
+                <input type="search" value={providerQuery} onChange={(event) => { setProviderQuery(event.target.value); setProviderPage(1); }} placeholder="Search routes…" className="h-9 w-full rounded-lg border border-[var(--border)] bg-white pl-8 pr-3 text-[10px] text-[var(--text-strong)]" />
+              </label>
+              <label>
+                <span className="sr-only">Sort provider routes</span>
+                <select value={providerSort} onChange={(event) => { setProviderSort(event.target.value as SignalOpsProviderSortV1); setProviderPage(1); }} className="h-9 w-full rounded-lg border border-[var(--border)] bg-white px-2.5 text-[10px] font-semibold text-[var(--text-dim)]">
+                  {providerSortOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
+              </label>
+            </div>
             {snapshot.providers.length === 0 ? <EmptyState text="Provider attempts will appear after the source application delivers its first terminal attempt." /> : (
               <>
-                <div className="divide-y divide-[var(--border-soft)]">
+                {providerPagination.rows.length === 0 ? <EmptyState text="No explicit provider route matches this local search." /> : <div className="divide-y divide-[var(--border-soft)]">
                   {providerPagination.rows.map((provider) => (
                     <div key={`${provider.providerKey}:${provider.modelKey}`} className="grid gap-3 py-4 first:pt-0 last:pb-0 sm:grid-cols-[1fr_auto_auto] sm:items-center">
                       <div><p className="text-sm font-semibold text-[var(--text-strong)]">{provider.providerVendor || provider.providerKey}</p><p className="mt-1 font-mono text-[10px] text-[var(--text-dim)]">{provider.providerKey} / {provider.modelKey}</p></div>
@@ -1385,7 +2151,7 @@ export function LiveCockpit() {
                       <span className={`justify-self-start rounded-full px-2 py-1 text-[10px] font-bold ring-1 sm:justify-self-end ${healthTone(provider.health.status)}`}>{provider.health.status.replace("_", " ")}</span>
                     </div>
                   ))}
-                </div>
+                </div>}
                 <Pagination
                   ariaLabel="Provider route pagination"
                   itemLabel="routes"
@@ -1400,8 +2166,23 @@ export function LiveCockpit() {
           </Panel>
 
           <Panel title="Model performance" subtitle="Logical model classes · select one to inspect retained operations">
+            <div className="mb-4 grid gap-2 sm:grid-cols-[1fr_160px]">
+              <label className="relative block">
+                <span className="sr-only">Search logical models</span>
+                <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-[var(--mute)]" />
+                <input type="search" value={modelQuery} onChange={(event) => { setModelQuery(event.target.value); setModelPage(1); }} placeholder="Search models…" className="h-9 w-full rounded-lg border border-[var(--border)] bg-white pl-8 pr-3 text-[10px] text-[var(--text-strong)]" />
+              </label>
+              <label>
+                <span className="sr-only">Sort logical models</span>
+                <select value={modelSort} onChange={(event) => { setModelSort(event.target.value as SignalOpsModelSortV1); setModelPage(1); }} className="h-9 w-full rounded-lg border border-[var(--border)] bg-white px-2.5 text-[10px] font-semibold text-[var(--text-dim)]">
+                  {modelSortOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
+              </label>
+            </div>
             {snapshot.models.length === 0 ? (
               <EmptyState text="Model performance appears after the source application sends an operation." />
+            ) : modelPagination.rows.length === 0 ? (
+              <EmptyState text="No logical model matches this local search." />
             ) : (
               <>
                 <div className="divide-y divide-[var(--border-soft)]">
@@ -1445,12 +2226,16 @@ export function LiveCockpit() {
             )}
           </Panel>
 
-          <div id="operations-explorer" ref={operationSectionRef} tabIndex={-1} className="min-w-0 scroll-mt-24 outline-none lg:col-span-2">
+        </section>
+        </AnalysisGroup>
+
+          <div id="operations-explorer" ref={operationSectionRef} tabIndex={-1} className="mt-6 min-w-0 scroll-mt-24 outline-none">
             <Panel
               title="Operations explorer"
               subtitle={`${formatNumber(operationPagination.total)} retained match${operationPagination.total === 1 ? "" : "es"} across ${formatNumber(retainedOperations.length)} indexed rows · ${formatNumber(snapshot.totals.operations)} total operations in ${displayedRange} · identifiers only`}
             >
-              <div className="mb-4 grid gap-2 lg:grid-cols-[minmax(260px,1fr)_190px_auto_auto]">
+              <p className="sr-only" aria-live="polite" aria-atomic="true">{operationPagination.total} retained operations match the current explorer view.</p>
+              <div className="mb-4 grid gap-2 xl:grid-cols-[minmax(260px,1fr)_190px_repeat(4,auto)]">
                 <label className="relative block">
                   <span className="sr-only">Search retained operations</span>
                   <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[var(--mute)]" />
@@ -1486,6 +2271,33 @@ export function LiveCockpit() {
                 </label>
                 <button type="button" onClick={() => void copyCockpitView()} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-white px-3 text-xs font-semibold text-[var(--text-dim)] transition hover:border-[var(--accent)] hover:text-[var(--accent)]" title="Copy range and safe filters; free-form search is intentionally excluded"><Copy className="size-3.5" /> Share</button>
                 <button type="button" disabled={filteredOperations.length === 0} onClick={downloadOperationsCsv} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-white px-3 text-xs font-semibold text-[var(--text-dim)] transition hover:border-[var(--accent)] hover:text-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-40" title="Export the current retained matches, not every operation in the range"><Download className="size-3.5" /> CSV</button>
+                <button type="button" onClick={() => void copyInvestigationBrief()} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-white px-3 text-xs font-semibold text-[var(--text-dim)] transition hover:border-[var(--accent)] hover:text-[var(--accent)]" title="Copy a privacy-safe Markdown handoff"><FileText className="size-3.5" /> Brief</button>
+                <button type="button" onClick={downloadSnapshotJson} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-white px-3 text-xs font-semibold text-[var(--text-dim)] transition hover:border-[var(--accent)] hover:text-[var(--accent)]" title="Export canonical aggregates and current retained matches"><Braces className="size-3.5" /> JSON</button>
+              </div>
+              <div className="mb-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-5" aria-label="Canonical operation dimensions">
+                <DimensionSelect label="Operation kind" value={operationKind} values={operationKinds} onChange={(value) => { setOperationKind(value); setOperationPage(1); }} />
+                <DimensionSelect label="Service" value={operationService} values={operationServices} onChange={(value) => { setOperationService(value); setOperationPage(1); }} />
+                <DimensionSelect label="Environment" value={operationEnvironment} values={operationEnvironments} onChange={(value) => { setOperationEnvironment(value); setOperationPage(1); }} />
+                <DimensionSelect label="Release" value={operationRelease} values={operationReleases} onChange={(value) => { setOperationRelease(value); setOperationPage(1); }} />
+                <label className="relative">
+                  <span className="sr-only">Triage retained operations</span>
+                  <SlidersHorizontal className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-[var(--mute)]" />
+                  <select value={operationTriage} onChange={(event) => { setOperationTriage(event.target.value as SignalOpsOperationTriageV1); setOperationPage(1); }} className="h-10 w-full appearance-none rounded-lg border border-[var(--border)] bg-white pl-9 pr-8 text-[10px] font-semibold text-[var(--text-dim)] shadow-sm">
+                    {operationTriageOptions.map((option) => <option key={option.value} value={option.value} disabled={option.value === "slow" && snapshot.totals.p95DurationMs === null}>{option.label}</option>)}
+                  </select>
+                </label>
+              </div>
+              <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-[var(--border-soft)] bg-[var(--surface-mute)] px-3 py-2" aria-label="Operations explorer preferences">
+                <Rows3 className="size-3.5 text-[var(--accent)]" />
+                <span className="font-mono text-[9px] font-bold uppercase tracking-[0.08em] text-[var(--mute)]">Table</span>
+                <label className="ml-1 inline-flex items-center gap-2 text-[10px] font-semibold text-[var(--text-dim)]">Rows
+                  <select value={operationPageSize} onChange={(event) => { setOperationPageSize(Number(event.target.value) as CockpitPreferences["operationPageSize"]); setOperationPage(1); }} className="h-8 rounded-lg border border-[var(--border)] bg-white px-2 text-[10px]">
+                    {OPERATION_PAGE_SIZE_OPTIONS.map((size) => <option key={size} value={size}>{size}</option>)}
+                  </select>
+                </label>
+                <button type="button" aria-pressed={operationDensity === "compact"} onClick={() => setOperationDensity((density) => density === "compact" ? "comfortable" : "compact")} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-[var(--border)] bg-white px-2.5 text-[10px] font-semibold text-[var(--text-dim)] hover:border-[var(--accent)] hover:text-[var(--accent)]"><TableProperties className="size-3.5" /> {operationDensity === "compact" ? "Compact" : "Comfortable"}</button>
+                <button type="button" aria-pressed={operationTimeMode === "absolute"} onClick={() => setOperationTimeMode((mode) => mode === "absolute" ? "relative" : "absolute")} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-[var(--border)] bg-white px-2.5 text-[10px] font-semibold text-[var(--text-dim)] hover:border-[var(--accent)] hover:text-[var(--accent)]"><Clock3 className="size-3.5" /> {operationTimeMode === "absolute" ? "Absolute UTC" : "Relative time"}</button>
+                <button type="button" onClick={() => setCommandPaletteOpen(true)} className="ml-auto inline-flex h-8 items-center gap-1.5 rounded-lg border border-[var(--border)] bg-white px-2.5 text-[10px] font-semibold text-[var(--text-dim)] hover:border-[var(--accent)] hover:text-[var(--accent)]"><Bookmark className="size-3.5" /> Saved views {savedViews.length > 0 ? `(${savedViews.length})` : ""}</button>
               </div>
               <div className="mb-4 flex flex-wrap gap-2" aria-label="Operation status filter">
                 <FilterChip label="All" count={snapshot.totals.operations} active={operationFilter === "all"} onClick={() => activateOperationFilter("all")} />
@@ -1493,44 +2305,68 @@ export function LiveCockpit() {
                 <FilterChip label="Failed" count={snapshot.totals.failed} active={operationFilter === "failed"} tone="bad" onClick={() => activateOperationFilter("failed")} />
                 <FilterChip label="Running" count={runningOperations} active={operationFilter === "running"} onClick={() => activateOperationFilter("running")} />
               </div>
-              {(operationModel || operationFailure || operationQuery || operationSort !== "newest") ? (
+              {(operationModel || operationFailure || operationKind || operationService || operationEnvironment || operationRelease || operationTriage !== "all" || operationQuery || operationSort !== "newest") ? (
                 <div className="mb-5 flex flex-wrap items-center gap-2 rounded-lg border border-blue-100 bg-blue-50/60 px-3 py-2" aria-label="Active operation view">
                   <span className="font-mono text-[9px] font-bold uppercase tracking-[0.08em] text-blue-700">Focused view</span>
                   {operationModel ? <ActiveViewChip label={`Model: ${operationModel}`} onRemove={() => { setOperationModel(null); setOperationPage(1); }} /> : null}
                   {operationFailure ? <ActiveViewChip label={`Failure: ${operationFailure.replaceAll("_", " ")}`} onRemove={() => { setOperationFailure(null); setOperationPage(1); }} /> : null}
+                  {operationKind ? <ActiveViewChip label={`Kind: ${operationKind}`} onRemove={() => { setOperationKind(null); setOperationPage(1); }} /> : null}
+                  {operationService ? <ActiveViewChip label={`Service: ${operationService}`} onRemove={() => { setOperationService(null); setOperationPage(1); }} /> : null}
+                  {operationEnvironment ? <ActiveViewChip label={`Environment: ${operationEnvironment}`} onRemove={() => { setOperationEnvironment(null); setOperationPage(1); }} /> : null}
+                  {operationRelease ? <ActiveViewChip label={`Release: ${operationRelease}`} onRemove={() => { setOperationRelease(null); setOperationPage(1); }} /> : null}
+                  {operationTriage !== "all" ? <ActiveViewChip label={`Triage: ${operationTriageOptions.find((option) => option.value === operationTriage)?.label ?? operationTriage}`} onRemove={() => { setOperationTriage("all"); setOperationPage(1); }} /> : null}
                   {operationQuery ? <ActiveViewChip label={`Search: ${operationQuery}`} onRemove={() => { setOperationQuery(""); setOperationPage(1); }} /> : null}
                   {operationSort !== "newest" ? <ActiveViewChip label={operationSortOptions.find((option) => option.value === operationSort)?.label ?? operationSort} onRemove={() => { setOperationSort("newest"); setOperationPage(1); }} /> : null}
                   <button type="button" onClick={clearOperationView} className="ml-auto text-[10px] font-semibold text-blue-700 underline-offset-2 hover:underline">Clear all</button>
                 </div>
               ) : null}
+              {selectedOperations.length > 0 ? (
+                <div className="mb-5 flex flex-wrap items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50/70 px-3 py-2.5" aria-label="Selected operation actions">
+                  <CheckSquare className="size-4 text-indigo-700" />
+                  <span className="text-[10px] font-semibold text-indigo-900">{formatNumber(selectedOperations.length)} selected retained operation{selectedOperations.length === 1 ? "" : "s"}</span>
+                  <button type="button" onClick={openComparison} disabled={selectedOperations.length < 2 || selectedOperations.length > 6} className="ml-auto inline-flex h-8 items-center gap-1.5 rounded-lg border border-indigo-200 bg-white px-2.5 text-[10px] font-semibold text-indigo-800 hover:border-indigo-400 disabled:cursor-not-allowed disabled:opacity-45" title="Compare two to six selected operations"><GitCompareArrows className="size-3.5" /> Compare</button>
+                  <button type="button" onClick={() => void copySelectedOperationIds()} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-indigo-200 bg-white px-2.5 text-[10px] font-semibold text-indigo-800 hover:border-indigo-400"><Copy className="size-3.5" /> Copy IDs</button>
+                  <button type="button" onClick={downloadSelectedOperationsCsv} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-indigo-200 bg-white px-2.5 text-[10px] font-semibold text-indigo-800 hover:border-indigo-400"><Download className="size-3.5" /> Selected CSV</button>
+                  <button type="button" onClick={() => { setSelectedOperationIds([]); setComparisonOpen(false); }} className="grid size-8 place-items-center rounded-lg text-indigo-600 hover:bg-white hover:text-indigo-900" aria-label="Clear selected operations"><X className="size-3.5" /></button>
+                </div>
+              ) : null}
+              {comparisonOpen && selectedOperations.length >= 2 ? (
+                <OperationComparison rows={selectedOperations} onClose={() => setComparisonOpen(false)} />
+              ) : null}
               {operationPagination.rows.length === 0 ? (
                 <EmptyState text={hasFocusedOperationView ? "No retained operation matches this view. Clear a filter or choose another analysis window." : "The pipeline is connected. Trigger an AI operation in the source application to populate this table."} />
               ) : (
                 <>
-                  <div className="overflow-x-auto">
-                    <table className="w-full min-w-[1060px] text-left">
-                      <thead><tr className="border-b border-[var(--border)] font-mono text-[9px] uppercase tracking-[0.08em] text-[var(--mute)]"><th className="pb-3 font-semibold">Operation</th><th className="pb-3 font-semibold">Status</th><th className="pb-3 font-semibold">Model class</th><th className="pb-3 font-semibold">Failure</th><th className="pb-3 font-semibold">Duration</th><th className="pb-3 font-semibold">Attempts</th><th className="pb-3 text-right font-semibold">Seen</th><th className="pb-3 text-right font-semibold">Trace</th></tr></thead>
+                  <div
+                    className="max-h-[68vh] overflow-auto overscroll-contain rounded-lg border border-[var(--border-soft)]"
+                    tabIndex={0}
+                    role="region"
+                    aria-label="Retained operations table"
+                  >
+                    <table className="w-full min-w-[1120px] text-left">
+                      <thead className="sticky top-0 z-10 bg-white shadow-[0_1px_0_var(--border)]"><tr className="font-mono text-[9px] uppercase tracking-[0.08em] text-[var(--mute)]"><th className="w-10 py-3 pl-2 pr-2 font-semibold"><SelectionCheckbox checked={allCurrentPageSelected} indeterminate={someCurrentPageSelected && !allCurrentPageSelected} onChange={toggleCurrentPageSelection} label={allCurrentPageSelected ? "Deselect current operations page" : "Select current operations page"} /></th><th className="py-3 font-semibold">Operation</th><th className="py-3 font-semibold">Status</th><th className="py-3 font-semibold">Model class</th><th className="py-3 font-semibold">Failure</th><th className="py-3 font-semibold">Duration</th><th className="py-3 font-semibold">Attempts</th><th className="py-3 text-right font-semibold">Seen</th><th className="py-3 pr-2 text-right font-semibold">Trace</th></tr></thead>
                       <tbody className="divide-y divide-[var(--border-soft)]">
                         {operationPagination.rows.map((operation) => (
-                          <tr key={operation.operationId} className={`text-xs transition-colors hover:bg-[var(--surface-mute)] ${selectedOperationId === operation.operationId ? "bg-blue-50/70" : ""}`}>
-                            <td className="py-3.5">
+                          <tr key={operation.operationId} className={`text-xs transition-colors hover:bg-[var(--surface-mute)] ${selectedOperationId === operation.operationId ? "bg-blue-50/70" : selectedOperationIds.includes(operation.operationId) ? "bg-indigo-50/50" : ""}`}>
+                            <td className={`${operationRowPadding} pl-2 pr-2`}><SelectionCheckbox checked={selectedOperationIds.includes(operation.operationId)} indeterminate={false} onChange={() => toggleOperationSelection(operation.operationId)} label={`${selectedOperationIds.includes(operation.operationId) ? "Deselect" : "Select"} operation ${operation.operationId}`} /></td>
+                            <td className={operationRowPadding}>
                               <div className="flex max-w-[210px] items-center gap-1">
-                                <p className="min-w-0 flex-1 truncate font-mono text-[10px] font-semibold text-[var(--text-strong)]" title={operation.operationId}>{operation.operationId}</p>
+                                <button type="button" onClick={(event) => openOperationTrace(operation.operationId, event.currentTarget)} className="min-h-6 min-w-0 flex-1 truncate rounded text-left font-mono text-[10px] font-semibold text-[var(--text-strong)] underline-offset-2 hover:text-[var(--accent)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]" title={`Inspect ${operation.operationId}`}>{operation.operationId}</button>
                                 <button type="button" onClick={() => void copyText(operation.operationId, "Operation ID copied")} className="grid size-7 shrink-0 place-items-center rounded-md text-[var(--mute)] opacity-70 transition hover:bg-white hover:text-[var(--accent)] hover:opacity-100 focus-visible:opacity-100" aria-label={`Copy operation ID ${operation.operationId}`} title="Copy operation ID"><Copy className="size-3.5" /></button>
                               </div>
-                              <p className="mt-1 text-[10px] text-[var(--text-dim)]">{operation.service} · {operation.environment}</p>
+                              <p className="mt-1 text-[10px] text-[var(--text-dim)]">{operation.service} · {operation.environment}{operation.release ? ` · ${operation.release}` : ""}</p>
                             </td>
-                            <td className="py-3.5"><span className={`rounded-full px-2 py-1 text-[10px] font-bold ring-1 ${statusTone(operation.status)}`}>{operation.status}</span></td>
-                            <td className="max-w-[180px] py-3.5 text-[var(--text-dim)]"><span className="block truncate" title={operation.logicalModelKey || operation.kind}>{operation.logicalModelKey || operation.kind}</span></td>
-                            <td className="py-3.5">
+                            <td className={operationRowPadding}><span className={`rounded-full px-2 py-1 text-[10px] font-bold ring-1 ${statusTone(operation.status)}`}>{operation.status}</span></td>
+                            <td className={`max-w-[180px] ${operationRowPadding} text-[var(--text-dim)]`}><span className="block truncate" title={operation.logicalModelKey || operation.kind}>{operation.logicalModelKey || operation.kind}</span><span className="mt-1 block truncate font-mono text-[9px] text-[var(--mute)]" title={operation.kind}>{operation.kind}</span></td>
+                            <td className={operationRowPadding}>
                               {operation.status === "succeeded" || operation.status === "running" ? <span className="text-[var(--mute)]">—</span> : (
                                 <div><p className="font-medium text-rose-700">{operation.failureCategory?.replaceAll("_", " ") || "unclassified"}</p><p className="mt-1 max-w-[180px] truncate font-mono text-[9px] text-[var(--mute)]" title={operation.failureCode}>{operation.failureCode || (operation.failureRetryable ? "retryable" : "no failure code")}</p></div>
                               )}
                             </td>
-                            <td className="py-3.5 font-medium">{formatDuration(operation.durationMs)}</td>
-                            <td className="py-3.5 font-medium">{formatNumber(operation.attemptCount)}</td>
-                            <td className="py-3.5 text-right text-[var(--text-dim)]">{relativeTime(operation.occurredAt)}</td>
-                            <td className="py-3.5 text-right">
+                            <td className={`${operationRowPadding} font-medium`}>{formatDuration(operation.durationMs)}</td>
+                            <td className={`${operationRowPadding} font-medium`}>{formatNumber(operation.attemptCount)}</td>
+                            <td className={`${operationRowPadding} text-right text-[var(--text-dim)]`} title={absoluteUtcTime(operation.occurredAt)}>{operationTimeMode === "absolute" ? absoluteUtcTime(operation.occurredAt) : relativeTime(operation.occurredAt)}</td>
+                            <td className={`${operationRowPadding} pr-2 text-right`}>
                               <button
                                 type="button"
                                 aria-label={`Inspect operation ${operation.operationId}`}
@@ -1550,7 +2386,7 @@ export function LiveCockpit() {
                     itemLabel="operations"
                     page={operationPagination.page}
                     pageCount={operationPagination.pageCount}
-                    pageSize={OPERATION_PAGE_SIZE}
+                    pageSize={operationPageSize}
                     total={operationPagination.total}
                     onPageChange={setOperationPage}
                   />
@@ -1558,10 +2394,21 @@ export function LiveCockpit() {
               )}
             </Panel>
           </div>
-        </section>
-        <footer className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border)] py-5 text-[10px] text-[var(--mute)]"><span>{autoRefreshPaused ? "Auto-refresh paused" : `Next refresh in ${autoRefreshCountdown}s while this tab is visible`} · {snapshot.projection.sourceEventCount} source events · snapshot generated {new Date(snapshot.generatedAt).toLocaleTimeString()}</span><a className="font-semibold hover:text-[var(--accent)]" href="/schemas/ai-telemetry/v1">Canonical schema</a></footer>
+        <footer className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border)] py-5 text-[10px] text-[var(--mute)]"><span>{!isOnline ? "Offline polling paused" : autoRefreshPaused ? "Auto-refresh paused" : `Next refresh in ${autoRefreshCountdown}s (${autoRefreshSeconds}s cadence) while this tab is visible`} · {snapshot.projection.sourceEventCount} source events · snapshot generated {absoluteUtcTime(snapshot.generatedAt)}</span><a className="inline-flex min-h-6 items-center font-semibold hover:text-[var(--accent)]" href="/schemas/ai-telemetry/v1">Canonical schema</a></footer>
       </div>
     </main>
+    <CockpitCommandPalette
+      open={commandPaletteOpen}
+      onOpenChange={setCommandPaletteOpen}
+      commands={cockpitCommands}
+      savedViews={savedViews}
+      onSaveView={saveCurrentView}
+      onApplySavedView={applySavedView}
+      onDeleteSavedView={deleteSavedView}
+    />
+    {showBackToTop ? (
+      <button type="button" onClick={() => jumpToSection("overview")} className="fixed bottom-5 left-5 z-[70] inline-flex h-10 items-center gap-2 rounded-xl border border-[var(--border)] bg-white px-3 text-[10px] font-semibold text-[var(--text-dim)] shadow-lg transition hover:-translate-y-0.5 hover:border-[var(--accent)] hover:text-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]" aria-label="Back to cockpit overview"><ArrowUp className="size-3.5" /> Back to top</button>
+    ) : null}
     {selectedOperationId ? (
       <OperationTraceDrawer
         operationId={selectedOperationId}
@@ -1576,6 +2423,50 @@ export function LiveCockpit() {
       </div>
     ) : null}
     </>
+  );
+}
+
+function AnalysisGroup({
+  id,
+  sectionRef,
+  icon: Icon,
+  title,
+  subtitle,
+  collapsed,
+  onToggle,
+  children,
+}: {
+  id: string;
+  sectionRef: React.RefObject<HTMLElement | null>;
+  icon: typeof Activity;
+  title: string;
+  subtitle: string;
+  collapsed: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <section id={id} ref={sectionRef} tabIndex={-1} className="mt-6 scroll-mt-24 outline-none">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] pb-3">
+        <div>
+          <h2 className="flex items-center gap-2 text-sm font-semibold text-[var(--text-strong)]"><Icon className="size-4 text-[var(--accent)]" /> {title}</h2>
+          <p className="mt-1 text-[10px] text-[var(--text-dim)]">{subtitle}</p>
+        </div>
+        <button
+          type="button"
+          aria-expanded={!collapsed}
+          aria-controls={`${id}-content`}
+          onClick={onToggle}
+          className="inline-flex min-h-9 items-center gap-2 rounded-lg border border-[var(--border)] bg-white px-3 text-[10px] font-semibold text-[var(--text-dim)] transition hover:border-[var(--accent)] hover:text-[var(--accent)]"
+        >
+          {collapsed ? <ChevronDown className="size-3.5" /> : <ChevronUp className="size-3.5" />}
+          {collapsed ? "Expand" : "Collapse"}
+        </button>
+      </div>
+      <div id={`${id}-content`} hidden={collapsed}>
+        {children}
+      </div>
+    </section>
   );
 }
 
@@ -1625,6 +2516,96 @@ function CoverageRow({ label, metric }: { label: string; metric: SignalOpsCovera
   );
 }
 
+function DimensionSelect({
+  label,
+  value,
+  values,
+  onChange,
+}: {
+  label: string;
+  value: string | null;
+  values: readonly string[];
+  onChange: (value: string | null) => void;
+}) {
+  return (
+    <label className="relative">
+      <span className="sr-only">Filter retained operations by {label.toLocaleLowerCase()}</span>
+      <select value={value ?? ""} onChange={(event) => onChange(event.target.value || null)} className="h-10 w-full appearance-none rounded-lg border border-[var(--border)] bg-white px-3 pr-8 text-[10px] font-semibold text-[var(--text-dim)] shadow-sm">
+        <option value="">All {label.toLocaleLowerCase()}s</option>
+        {values.map((option) => <option key={option} value={option}>{option}</option>)}
+      </select>
+    </label>
+  );
+}
+
+function SelectionCheckbox({
+  checked,
+  indeterminate,
+  onChange,
+  label,
+}: {
+  checked: boolean;
+  indeterminate: boolean;
+  onChange: () => void;
+  label: string;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = indeterminate;
+  }, [indeterminate]);
+  return (
+    <input
+      ref={ref}
+      type="checkbox"
+      checked={checked}
+      onChange={onChange}
+      aria-label={label}
+      className="size-6 rounded border-[var(--border)] accent-[var(--accent)]"
+    />
+  );
+}
+
+function OperationComparison({
+  rows,
+  onClose,
+}: {
+  rows: readonly SignalOpsOperationSnapshotV1[];
+  onClose: () => void;
+}) {
+  return (
+    <section aria-label="Selected operation comparison" className="mb-5 rounded-xl border border-indigo-200 bg-white p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="flex items-center gap-2 text-xs font-semibold text-[var(--text-strong)]"><GitCompareArrows className="size-4 text-indigo-600" /> Retained operation comparison</h3>
+          <p className="mt-1 text-[9px] text-[var(--text-dim)]">Side-by-side canonical row evidence; provider routes require opening each trace</p>
+        </div>
+        <button type="button" onClick={onClose} className="grid size-8 place-items-center rounded-lg text-[var(--mute)] hover:bg-[var(--surface-mute)] hover:text-[var(--text)]" aria-label="Close operation comparison"><X className="size-3.5" /></button>
+      </div>
+      <div className="mt-4 grid auto-cols-[minmax(220px,1fr)] grid-flow-col gap-3 overflow-x-auto pb-2">
+        {rows.map((row) => (
+          <article key={row.operationId} className="rounded-lg border border-[var(--border)] bg-[var(--surface-mute)] p-3">
+            <p className="truncate font-mono text-[9px] font-semibold text-[var(--text-strong)]" title={row.operationId}>{row.operationId}</p>
+            <span className={`mt-2 inline-flex rounded-full px-2 py-1 text-[9px] font-bold ring-1 ${statusTone(row.status)}`}>{row.status}</span>
+            <dl className="mt-3 grid gap-2 text-[9px]">
+              <ComparisonDatum label="Model" value={row.logicalModelKey || "Not reported"} />
+              <ComparisonDatum label="Kind" value={row.kind} />
+              <ComparisonDatum label="Duration" value={formatDuration(row.durationMs)} />
+              <ComparisonDatum label="Attempts" value={formatNumber(row.attemptCount)} />
+              <ComparisonDatum label="Failure" value={row.failureCategory?.replaceAll("_", " ") || "None classified"} />
+              <ComparisonDatum label="Source" value={`${row.service} · ${row.environment}${row.release ? ` · ${row.release}` : ""}`} />
+              <ComparisonDatum label="Occurred" value={absoluteUtcTime(row.occurredAt)} />
+            </dl>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ComparisonDatum({ label, value }: { label: string; value: string }) {
+  return <div className="grid grid-cols-[62px_1fr] gap-2"><dt className="font-mono uppercase text-[var(--mute)]">{label}</dt><dd className="min-w-0 break-words font-medium text-[var(--text)]">{value}</dd></div>;
+}
+
 function FilterChip({ label, count, active, onClick, tone = "neutral" }: { label: string; count: number; active: boolean; onClick: () => void; tone?: "neutral" | "good" | "bad" }) {
   const activeClass = tone === "bad"
     ? "border-rose-600 bg-rose-600 text-white"
@@ -1638,7 +2619,7 @@ function ActiveViewChip({ label, onRemove }: { label: string; onRemove: () => vo
   return (
     <span className="inline-flex max-w-full items-center gap-1 rounded-full border border-blue-200 bg-white py-1 pl-2.5 pr-1 text-[10px] font-semibold text-blue-800">
       <span className="max-w-[240px] truncate" title={label}>{label}</span>
-      <button type="button" onClick={onRemove} className="grid size-5 shrink-0 place-items-center rounded-full text-blue-500 hover:bg-blue-100 hover:text-blue-800" aria-label={`Remove ${label}`}><X className="size-3" /></button>
+      <button type="button" onClick={onRemove} className="grid size-6 shrink-0 place-items-center rounded-full text-blue-500 hover:bg-blue-100 hover:text-blue-800" aria-label={`Remove ${label}`}><X className="size-3" /></button>
     </span>
   );
 }

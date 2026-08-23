@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { dispatchCsvDownload } from "../src/lib/csv-download.ts";
+import {
+  dispatchCsvDownload,
+  dispatchTextDownload,
+} from "../src/lib/csv-download.ts";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..");
@@ -175,6 +178,22 @@ successful.scheduledCleanup();
 assert.deepEqual(successful.calls.at(-1), [
   "revoke-object-url",
   "blob:signalops-export",
+]);
+
+const jsonDownload = createDownloadHarness();
+assert.deepEqual(
+  dispatchTextDownload(
+    "snapshot.json",
+    '{"ok":true}\n',
+    { mimeType: "application/json;charset=utf-8" },
+    jsonDownload.dependencies,
+  ),
+  { dispatched: true },
+);
+assert.deepEqual(jsonDownload.calls[0], [
+  "blob",
+  ['{"ok":true}\n'],
+  { type: "application/json;charset=utf-8" },
 ]);
 
 const failedAttempt = createDownloadHarness({
