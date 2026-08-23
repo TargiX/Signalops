@@ -1,6 +1,6 @@
 # SignalOps Platform v1 Implementation SPEC
 
-Status: Draft for implementation
+Status: Dogfood vertical slice implemented; hosted production gates remain open
 Repository: `TargiX/signalops`
 Target base: `main`
 Depends on: [Canonical AI Telemetry Contract v1](./canonical-ai-telemetry-v1.md)
@@ -15,11 +15,39 @@ statuses, credits, or provider implementation details.
 
 The first production outcome is:
 
-> An authenticated Phosphene operator can open SignalOps, select `24h`, `7d`, or `30d`, and inspect
+> An authenticated Phosphene operator can open SignalOps, select `24h`, `7d`, `30d`, or `90d`, and inspect
 > real operation volume, attempt reliability, provider/model latency, retries, estimated or actual
 > cost, and derived incidents without exposing user content or changing production routing.
 
 ## 2. Current state
+
+### 2.1 Implemented dogfood slice (2026-08-23)
+
+- `POST /v1/events` and `/v1/events/validate` authenticate a tenant credential, validate the
+  canonical contract, and return per-event stored/duplicate/conflict/rejection receipts.
+- A local append-only JSONL adapter proves restart-safe dogfood; a Supabase/PostgREST adapter and
+  least-privilege RLS migration implement the same event store/reader seams for hosted storage.
+- `GET /v1/ops/snapshot` builds a bounded deterministic read projection without prompts, users,
+  media URLs, provider credentials, or raw errors.
+- `/cockpit` is a signed, tenant-bound operator session and privacy-safe live view;
+  `/cockpit?mode=demo` preserves the synthetic control-plane demonstration.
+- The canonical JSON Schema is published from the application at its exact `$id` path.
+- The Phosphene reference integration delivered 174 historical canonical facts through its
+  transactional outbox into the local SignalOps adapter with zero pending or quarantined rows.
+
+The local workspace-password session is the first operator-auth adapter, not a shared Phosphene
+cookie. Hosted multi-user onboarding still requires OIDC/Supabase Auth plus
+`operator_memberships`; this replacement must preserve the same tenant-bound session contract.
+
+### 2.2 Remaining hosted production gates
+
+- provision a dedicated SignalOps Supabase project and apply the committed migration;
+- seed the first tenant, hashed ingest credential, and operator membership;
+- configure hosted secrets and deploy the new routes/schema;
+- add rate limiting, projection checkpoints/materialized windows, incident APIs, and alerting;
+- run cross-tenant adapter tests against Postgres plus backup/restore and key-rotation drills.
+
+The existing Roomboard and Anchor Supabase projects are unrelated and must not be reused.
 
 The repository already contains:
 
@@ -121,7 +149,7 @@ interface. It MUST distinguish:
 External interface:
 
 ```ts
-getOpsSnapshot(principal: TenantPrincipal, range: "24h" | "7d" | "30d"): Promise<OpsSnapshotV1>
+getOpsSnapshot(principal: TenantPrincipal, range: "24h" | "7d" | "30d" | "90d"): Promise<OpsSnapshotV1>
 ```
 
 The implementation owns tenant scoping, query optimization, range semantics, and conversion from
@@ -231,7 +259,7 @@ Required production routes:
 
 - `POST /v1/events/validate`;
 - `POST /v1/events`;
-- `GET /v1/ops/snapshot?range=24h|7d|30d`;
+- `GET /v1/ops/snapshot?range=24h|7d|30d|90d`;
 - `GET /v1/incidents`;
 - `GET /v1/incidents/:id`.
 
@@ -295,8 +323,10 @@ until a separate privacy-reviewed contract exists. Do not infer users from opera
 - SignalOps monitors its own ingest availability, rejection rate, projection lag, conflicts, and
   database health.
 - A broken projector does not destroy accepted events.
-- Raw canonical events default to 30-day retention; hourly/daily aggregates default to 13 months.
-  Retention is configurable and MUST be disclosed to tenants before onboarding.
+- Raw canonical events default to 100-day retention so the 90-day cockpit remains rebuildable.
+  Conflict and audit evidence defaults to 400 days, while rate-limit buckets default to two days.
+  Retention is configurable and MUST be disclosed to tenants before onboarding. Long-lived
+  aggregate retention is a later storage tier and MUST NOT be claimed until it is implemented.
 
 ## 11. Shared contract artifacts
 

@@ -1,0 +1,515 @@
+import type { StoredSignalOpsEventV1 } from "./event-store.ts";
+import type {
+  SignalOpsCostSourceV1,
+  SignalOpsEventV1,
+  SignalOpsFailureCategoryV1,
+  SignalOpsTerminalStatusV1,
+} from "./types.ts";
+
+type OperationAcceptedEvent = Extract<
+  SignalOpsEventV1,
+  { type: "com.signalops.ai.operation.accepted.v1" }
+>;
+
+type OperationTerminalEvent = Extract<
+  SignalOpsEventV1,
+  { type: "com.signalops.ai.operation.terminal.v1" }
+>;
+
+type AttemptEvent = Extract<
+  SignalOpsEventV1,
+  {
+    type:
+      | "com.signalops.ai.attempt.started.v1"
+      | "com.signalops.ai.attempt.terminal.v1";
+  }
+>;
+
+type AttemptTerminalEvent = Extract<
+  SignalOpsEventV1,
+  { type: "com.signalops.ai.attempt.terminal.v1" }
+>;
+
+type NonProbeEvent = Exclude<
+  SignalOpsEventV1,
+  { type: "com.signalops.ai.provider.probe.v1" }
+>;
+
+export type SignalOpsOpsRangeV1 = "24h" | "7d" | "30d" | "90d";
+export type SignalOpsProviderHealthV1 = "healthy" | "degraded" | "incident" | "insufficient_data";
+
+export type SignalOpsCostTotalsV1 = Record<SignalOpsCostSourceV1, number>;
+
+export type SignalOpsCurrencyCostV1 = SignalOpsCostTotalsV1 & {
+  currency: string;
+};
+
+export type SignalOpsProviderSnapshotV1 = {
+  providerKey: string;
+  providerVendor?: string;
+  modelKey: string;
+  attempts: number;
+  succeeded: number;
+  failed: number;
+  successRate: number | null;
+  retryableFailures: number;
+  p95DurationMs: number | null;
+  costByCurrency: SignalOpsCurrencyCostV1[];
+  health: {
+    status: SignalOpsProviderHealthV1;
+    sampleSize: number;
+    failureRate: number | null;
+    p95DurationMs: number | null;
+    windowMinutes: number;
+    policyVersion: string;
+  };
+};
+
+export type SignalOpsOperationSnapshotV1 = {
+  operationId: string;
+  kind: string;
+  logicalModelKey?: string;
+  status: SignalOpsTerminalStatusV1 | "running";
+  durationMs: number | null;
+  attemptCount: number;
+  environment: string;
+  service: string;
+  release?: string;
+  occurredAt: string;
+};
+
+export type SignalOpsProjectionPolicyV1 = {
+  version: string;
+  providerWindowMinutes: number;
+  minimumProviderSample: number;
+  warningFailureRate: number;
+  criticalFailureRate: number;
+  warningP95DurationMs: number;
+  criticalP95DurationMs: number;
+};
+
+export const DEFAULT_SIGNALOPS_PROJECTION_POLICY_V1: SignalOpsProjectionPolicyV1 = {
+  version: "provider-health-2026-08-23",
+  providerWindowMinutes: 10,
+  minimumProviderSample: 20,
+  warningFailureRate: 0.1,
+  criticalFailureRate: 0.25,
+  warningP95DurationMs: 120_000,
+  criticalP95DurationMs: 300_000,
+};
+
+export type SignalOpsOpsSnapshotV1 = {
+  tenant: { id: string; name: string };
+  range: SignalOpsOpsRangeV1;
+  generatedAt: string;
+  freshness: { lastEventAt: string | null; lastReceivedAt: string | null };
+  projection: {
+    materialized: boolean;
+    checkpointReceivedAt: string | null;
+    sourceEventCount: number;
+  };
+  dataQuality: {
+    complete: boolean;
+    truncated: boolean;
+    contradictoryTerminals: number;
+    identityCollisions: number;
+    idempotencyConflicts: number;
+  };
+  totals: {
+    events: number;
+    operations: number;
+    attempts: number;
+    succeeded: number;
+    failed: number;
+    successRate: number | null;
+    p95DurationMs: number | null;
+    retryableFailures: number;
+    costByCurrency: SignalOpsCurrencyCostV1[];
+  };
+  environments: string[];
+  providers: SignalOpsProviderSnapshotV1[];
+  recentOperations: SignalOpsOperationSnapshotV1[];
+};
+
+type OperationState = {
+  source?: NonProbeEvent;
+  accepted?: OperationAcceptedEvent;
+  terminal?: OperationTerminalEvent;
+  attempts: Set<string>;
+};
+
+type AttemptState = {
+  operationId: string;
+  started?: AttemptEvent;
+  terminal?: AttemptTerminalEvent;
+};
+
+type ProviderAccumulator = Omit<
+  SignalOpsProviderSnapshotV1,
+  "successRate" | "p95DurationMs" | "costByCurrency" | "health"
+> & {
+  durations: number[];
+  costs: Map<string, SignalOpsCostTotalsV1>;
+  recentOutcomes: Array<{
+    occurredAt: string;
+    failed: boolean;
+    durationMs: number | null;
+    excludedFailure: boolean;
+  }>;
+};
+
+const providerExcludedFailures = new Set<SignalOpsFailureCategoryV1>([
+  "content_policy",
+  "invalid_input",
+  "customer_cancelled",
+  "client_configuration",
+]);
+
+export function rangeStartV1(range: SignalOpsOpsRangeV1, now = new Date()): string {
+  const hours =
+    range === "24h" ? 24 : range === "7d" ? 24 * 7 : range === "30d" ? 24 * 30 : 24 * 90;
+  return new Date(now.getTime() - hours * 60 * 60 * 1_000).toISOString();
+}
+
+function percentile95(values: readonly number[]): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((left, right) => left - right);
+  return sorted[Math.max(0, Math.ceil(sorted.length * 0.95) - 1)] ?? null;
+}
+
+function emptyCost(): SignalOpsCostTotalsV1 {
+  return { provider_reported: 0, catalog_estimate: 0, billing_reconciled: 0 };
+}
+
+function addCost(
+  costs: Map<string, SignalOpsCostTotalsV1>,
+  currency: string,
+  source: SignalOpsCostSourceV1,
+  amountText: string,
+): void {
+  const amount = Number(amountText);
+  if (!Number.isFinite(amount)) return;
+  const totals = costs.get(currency) ?? emptyCost();
+  totals[source] += amount;
+  costs.set(currency, totals);
+}
+
+function costRows(costs: Map<string, SignalOpsCostTotalsV1>): SignalOpsCurrencyCostV1[] {
+  return [...costs.entries()]
+    .map(([currency, totals]) => ({ currency, ...totals }))
+    .sort((left, right) => left.currency.localeCompare(right.currency));
+}
+
+function compareRecords(left: StoredSignalOpsEventV1, right: StoredSignalOpsEventV1): number {
+  return (
+    left.event.time.localeCompare(right.event.time) ||
+    left.receivedAt.localeCompare(right.receivedAt) ||
+    left.event.id.localeCompare(right.event.id)
+  );
+}
+
+function durationBetween(start: string | undefined, end: string): number | null {
+  if (!start) return null;
+  const duration = Date.parse(end) - Date.parse(start);
+  return Number.isFinite(duration) && duration >= 0 ? duration : null;
+}
+
+function providerHealth(
+  row: ProviderAccumulator,
+  now: Date,
+  policy: SignalOpsProjectionPolicyV1,
+): SignalOpsProviderSnapshotV1["health"] {
+  const windowStart = now.getTime() - policy.providerWindowMinutes * 60 * 1_000;
+  const eligible = row.recentOutcomes.filter(
+    (outcome) => Date.parse(outcome.occurredAt) >= windowStart && !outcome.excludedFailure,
+  );
+  const durations = eligible.flatMap((outcome) =>
+    outcome.durationMs === null ? [] : [outcome.durationMs],
+  );
+  const failed = eligible.filter((outcome) => outcome.failed).length;
+  const failureRate = eligible.length === 0 ? null : failed / eligible.length;
+  const p95DurationMs = percentile95(durations);
+  let status: SignalOpsProviderHealthV1 = "insufficient_data";
+  if (eligible.length >= policy.minimumProviderSample) {
+    if (
+      (failureRate ?? 0) >= policy.criticalFailureRate ||
+      (p95DurationMs ?? 0) >= policy.criticalP95DurationMs
+    ) {
+      status = "incident";
+    } else if (
+      (failureRate ?? 0) >= policy.warningFailureRate ||
+      (p95DurationMs ?? 0) >= policy.warningP95DurationMs
+    ) {
+      status = "degraded";
+    } else {
+      status = "healthy";
+    }
+  }
+  return {
+    status,
+    sampleSize: eligible.length,
+    failureRate,
+    p95DurationMs,
+    windowMinutes: policy.providerWindowMinutes,
+    policyVersion: policy.version,
+  };
+}
+
+export function buildSignalOpsOpsSnapshotV1(input: {
+  tenantId: string;
+  tenantName?: string;
+  range: SignalOpsOpsRangeV1;
+  records: readonly StoredSignalOpsEventV1[];
+  now?: Date;
+  sourceTruncated?: boolean;
+  idempotencyConflictCount?: number;
+  sourceEventCount?: number;
+  checkpointReceivedAt?: string | null;
+  materialized?: boolean;
+  policy?: SignalOpsProjectionPolicyV1;
+}): SignalOpsOpsSnapshotV1 {
+  const now = input.now ?? new Date();
+  const policy = input.policy ?? DEFAULT_SIGNALOPS_PROJECTION_POLICY_V1;
+  const startMs = Date.parse(rangeStartV1(input.range, now));
+  const records = input.records
+    .filter(
+      (record) =>
+        record.tenantId === input.tenantId && Date.parse(record.event.time) >= startMs,
+    )
+    .sort(compareRecords);
+  const operations = new Map<string, OperationState>();
+  const attempts = new Map<string, AttemptState>();
+  const attemptIdentity = new Map<string, string>();
+  const operationIdentity = new Map<string, string>();
+  const probes: Extract<SignalOpsEventV1, { type: "com.signalops.ai.provider.probe.v1" }>[] = [];
+  const environments = new Set<string>();
+  let contradictoryTerminals = 0;
+  let identityCollisions = 0;
+
+  for (const record of records) {
+    const { event } = record;
+    environments.add(event.data.resource.environment);
+    if (event.type === "com.signalops.ai.provider.probe.v1") {
+      probes.push(event);
+      continue;
+    }
+
+    const operationId = event.data.operation.id;
+    const operationSignature = `${event.data.operation.kind}\u0000${event.data.operation.logicalModelKey ?? ""}`;
+    const knownOperationSignature = operationIdentity.get(operationId);
+    if (knownOperationSignature && knownOperationSignature !== operationSignature) {
+      identityCollisions += 1;
+      continue;
+    }
+    operationIdentity.set(operationId, operationSignature);
+
+    if (
+      event.type === "com.signalops.ai.attempt.started.v1" ||
+      event.type === "com.signalops.ai.attempt.terminal.v1"
+    ) {
+      const attemptSignature = [
+        operationId,
+        event.data.route.providerKey,
+        event.data.route.modelKey,
+      ].join("\u0000");
+      const knownAttemptSignature = attemptIdentity.get(event.data.attempt.id);
+      if (knownAttemptSignature && knownAttemptSignature !== attemptSignature) {
+        identityCollisions += 1;
+        continue;
+      }
+      attemptIdentity.set(event.data.attempt.id, attemptSignature);
+    }
+
+    const operation = operations.get(operationId) ?? { attempts: new Set<string>() };
+    operation.source ??= event;
+    if (event.type === "com.signalops.ai.operation.accepted.v1") {
+      operation.accepted ??= event;
+    } else if (event.type === "com.signalops.ai.operation.terminal.v1") {
+      if (operation.terminal) {
+        contradictoryTerminals += 1;
+      } else {
+        operation.terminal ??= event;
+      }
+    } else {
+      const key = `${operationId}:${event.data.attempt.id}`;
+      const attempt = attempts.get(key) ?? { operationId };
+      operation.attempts.add(key);
+      if (event.type === "com.signalops.ai.attempt.started.v1") {
+        attempt.started ??= event;
+      } else if (attempt.terminal) {
+        contradictoryTerminals += 1;
+      } else {
+        attempt.terminal ??= event;
+      }
+      attempts.set(key, attempt);
+    }
+    operations.set(operationId, operation);
+  }
+
+  const providerRows = new Map<string, ProviderAccumulator>();
+  const totalCosts = new Map<string, SignalOpsCostTotalsV1>();
+  let retryableFailures = 0;
+  for (const attempt of attempts.values()) {
+    const event = attempt.terminal;
+    if (!event) continue;
+    const providerId = `${event.data.route.providerKey}:${event.data.route.modelKey}`;
+    const row = providerRows.get(providerId) ?? {
+      providerKey: event.data.route.providerKey,
+      providerVendor: event.data.route.providerVendor,
+      modelKey: event.data.route.modelKey,
+      attempts: 0,
+      succeeded: 0,
+      failed: 0,
+      retryableFailures: 0,
+      durations: [],
+      costs: new Map<string, SignalOpsCostTotalsV1>(),
+      recentOutcomes: [],
+    };
+    row.attempts += 1;
+    const succeeded = event.data.outcome.status === "succeeded";
+    if (succeeded) row.succeeded += 1;
+    else row.failed += 1;
+    const failure =
+      event.data.outcome.status === "failed" ? event.data.outcome.failure : undefined;
+    if (failure?.retryable) {
+      row.retryableFailures += 1;
+      retryableFailures += 1;
+    }
+    const durationMs =
+      event.data.metrics?.durationMs ?? durationBetween(attempt.started?.time, event.time);
+    if (durationMs !== null) row.durations.push(durationMs);
+    if (event.data.cost) {
+      addCost(row.costs, event.data.cost.currency, event.data.cost.source, event.data.cost.amount);
+      addCost(totalCosts, event.data.cost.currency, event.data.cost.source, event.data.cost.amount);
+    }
+    row.recentOutcomes.push({
+      occurredAt: event.time,
+      failed: !succeeded,
+      durationMs,
+      excludedFailure: Boolean(failure && providerExcludedFailures.has(failure.category)),
+    });
+    providerRows.set(providerId, row);
+  }
+
+  for (const event of probes) {
+    const modelKey = event.data.route.modelKey ?? "*";
+    const providerId = `${event.data.route.providerKey}:${modelKey}`;
+    const row = providerRows.get(providerId) ?? {
+      providerKey: event.data.route.providerKey,
+      providerVendor: event.data.route.providerVendor,
+      modelKey,
+      attempts: 0,
+      succeeded: 0,
+      failed: 0,
+      retryableFailures: 0,
+      durations: [],
+      costs: new Map<string, SignalOpsCostTotalsV1>(),
+      recentOutcomes: [],
+    };
+    row.recentOutcomes.push({
+      occurredAt: event.time,
+      failed: event.data.outcome.status === "failed",
+      durationMs: event.data.metrics?.durationMs ?? null,
+      excludedFailure: false,
+    });
+    providerRows.set(providerId, row);
+  }
+
+  const providers = [...providerRows.values()]
+    .map((row): SignalOpsProviderSnapshotV1 => ({
+      providerKey: row.providerKey,
+      providerVendor: row.providerVendor,
+      modelKey: row.modelKey,
+      attempts: row.attempts,
+      succeeded: row.succeeded,
+      failed: row.failed,
+      successRate: row.attempts === 0 ? null : row.succeeded / row.attempts,
+      retryableFailures: row.retryableFailures,
+      p95DurationMs: percentile95(row.durations),
+      costByCurrency: costRows(row.costs),
+      health: providerHealth(row, now, policy),
+    }))
+    .sort(
+      (left, right) =>
+        right.attempts - left.attempts ||
+        left.providerKey.localeCompare(right.providerKey) ||
+        left.modelKey.localeCompare(right.modelKey),
+    );
+
+  let succeededOperations = 0;
+  let failedOperations = 0;
+  const operationDurations: number[] = [];
+  const recentOperations = [...operations.entries()]
+    .map(([operationId, state]): SignalOpsOperationSnapshotV1 => {
+      const event = state.terminal ?? state.accepted ?? state.source;
+      if (!event) throw new Error(`operation ${operationId} has no lifecycle event`);
+      const terminal = state.terminal;
+      if (terminal?.data.outcome.status === "succeeded") succeededOperations += 1;
+      else if (terminal) failedOperations += 1;
+      const explicitDuration = terminal?.data.metrics?.totalDurationMs;
+      const durationMs = terminal
+        ? explicitDuration ?? durationBetween(state.accepted?.time, terminal.time)
+        : null;
+      if (durationMs !== null) operationDurations.push(durationMs);
+      return {
+        operationId,
+        kind: event.data.operation.kind,
+        logicalModelKey: event.data.operation.logicalModelKey,
+        status: terminal ? terminal.data.outcome.status : "running",
+        durationMs,
+        attemptCount: terminal?.data.metrics?.attemptCount ?? state.attempts.size,
+        environment: event.data.resource.environment,
+        service: event.data.resource.service,
+        release: event.data.resource.release,
+        occurredAt: terminal?.time ?? state.accepted?.time ?? event.time,
+      };
+    })
+    .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt));
+
+  const lastEventAt = records.at(-1)?.event.time ?? null;
+  const lastReceivedAt = records.reduce<string | null>(
+    (latest, record) => (!latest || record.receivedAt > latest ? record.receivedAt : latest),
+    null,
+  );
+  const terminalOperations = succeededOperations + failedOperations;
+  const truncated = input.sourceTruncated ?? false;
+  const idempotencyConflicts = input.idempotencyConflictCount ?? 0;
+
+  return {
+    tenant: { id: input.tenantId, name: input.tenantName ?? input.tenantId },
+    range: input.range,
+    generatedAt: now.toISOString(),
+    freshness: { lastEventAt, lastReceivedAt },
+    projection: {
+      materialized: input.materialized ?? false,
+      checkpointReceivedAt: input.checkpointReceivedAt ?? lastReceivedAt,
+      sourceEventCount: input.sourceEventCount ?? records.length,
+    },
+    dataQuality: {
+      complete:
+        !truncated &&
+        contradictoryTerminals === 0 &&
+        identityCollisions === 0 &&
+        idempotencyConflicts === 0,
+      truncated,
+      contradictoryTerminals,
+      identityCollisions,
+      idempotencyConflicts,
+    },
+    totals: {
+      events: records.length,
+      operations: operations.size,
+      attempts: attempts.size,
+      succeeded: succeededOperations,
+      failed: failedOperations,
+      successRate:
+        terminalOperations === 0 ? null : succeededOperations / terminalOperations,
+      p95DurationMs: percentile95(operationDurations),
+      retryableFailures,
+      costByCurrency: costRows(totalCosts),
+    },
+    environments: [...environments].sort(),
+    providers,
+    recentOperations: recentOperations.slice(0, 50),
+  };
+}

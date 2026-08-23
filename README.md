@@ -3,7 +3,10 @@
 **Live demo:** [signalops.cc](https://signalops.cc)  
 **Source:** [github.com/TargiX/signalops](https://github.com/TargiX/signalops)
 
-SignalOps is a React dashboard for operating AI image-generation products. It is intentionally built as a custom interface rather than a dropped-in enterprise grid, so the implementation shows state management, data density, virtualization, and design-system work.
+SignalOps is a vendor-neutral operations layer for AI generation products. It now includes a
+privacy-safe canonical telemetry contract, tenant-scoped ingestion, durable storage adapters, and
+an authenticated live cockpit. The original synthetic control-plane demo remains available as a
+separate mode.
 
 ## What It Demonstrates
 
@@ -36,12 +39,51 @@ Requires Node.js 24 or newer and pnpm 10.24.0, matching CI and the native TypeSc
 
 ```bash
 pnpm install
-pnpm dev
+dev-safe inspect
+dev-safe run --name signalops -- pnpm dev:any --hostname 127.0.0.1
 ```
 
-The dev server is pinned to [http://localhost:3020](http://localhost:3020) to avoid colliding with other local portfolio/product apps.
+Use the exact URL printed by `dev-safe`; it owns per-worktree routing and avoids colliding with
+other local apps. Copy `.env.example` into an ignored local environment file and configure the
+workspace password, session secret, and ingest token before testing live mode.
 
-## Event API boundaries
+## Live product boundaries
+
+- `/cockpit` is the authenticated live tenant view.
+- `/cockpit?mode=demo` is the synthetic routing/incident demonstration.
+- `POST /v1/events` accepts canonical AI telemetry using a tenant Bearer credential.
+- `POST /v1/events/validate` validates the same contract without storing it.
+- `GET /v1/ops/snapshot?range=24h|7d|30d|90d` requires a signed operator session.
+- `GET /v1/incidents` lists tenant incidents; ingest and the authenticated internal evaluator
+  maintain their open/resolved lifecycle.
+- `/schemas/ai-telemetry/v1` publishes the exact JSON Schema named by canonical events.
+- `/schemas/ai-telemetry/v1/ingest-response` publishes the closed success-envelope schema used by
+  producers to reconcile stored, duplicate, conflicting, and rejected event IDs.
+- `/api/readiness` reports storage, operator-auth, and ingest-auth configuration without secrets.
+
+Phosphene is the first tenant, not a special schema. SignalOps receives opaque operation/attempt
+facts and never receives prompts, media URLs, emails, user IDs, access tokens, or raw provider
+errors. Phosphene has a revocable service credential; its user session is never shared with
+SignalOps.
+
+Local development uses an append-only file under `.data/`. Hosted production fails closed unless
+a Supabase backend is configured (or local storage is explicitly opted into). The committed
+Supabase migration enables RLS and revokes `anon`/`authenticated` table access; secret/service-role
+credentials stay server-only.
+
+Hosted operators sign in through a pre-provisioned Supabase account using an email magic link or an
+allowlisted OAuth provider. Authentication alone grants no access: every request revalidates an
+active `signalops_v1_operator_memberships` row, and the cockpit can switch only among those tenant
+memberships. New users and ingest credentials are created explicitly with the admin workflow in
+[`docs/runbooks/signalops-operations.md`](docs/runbooks/signalops-operations.md); public self-signup
+is disabled.
+
+Accepted ingest schedules incident evaluation immediately after the durable receipt is returned.
+The authenticated daily job at `/api/internal/evaluate` also closes stale incidents and applies the
+configured retention policy. Raw events default to 100 days so the 90-day cockpit remains
+rebuildable; conflicts and audit rows default to 400 days, and rate-limit buckets to two days.
+
+## Legacy v0 event API boundaries
 
 - `POST /api/events/validate` is public and verification-only. It normalizes and redacts events but stores nothing.
 - `POST /api/events` is a protected development/test ingest seam. Set `SIGNALOPS_INGEST_TOKEN` and send that exact value using the Bearer authorization scheme.
@@ -51,20 +93,21 @@ The dev server is pinned to [http://localhost:3020](http://localhost:3020) to av
 
 ## Canonical telemetry v1
 
-The production-oriented, vendor-neutral v1 contract is now executable but not yet exposed as a
-production endpoint. Its JSON Schema, shared fixtures, portable semantic validator, and
+The production-oriented, vendor-neutral v1 contract is executable through `/v1/events*`. Its JSON Schema, shared fixtures, portable semantic validator, and
 implementation SPEC live under [`schemas/ai-telemetry/v1`](schemas/ai-telemetry/v1) and
 [`docs/specs`](docs/specs); the standalone runner is
 [`scripts/validate-signalops-contract.mjs`](scripts/validate-signalops-contract.mjs). Run
-`pnpm contract:validate` and `pnpm test:contract:v1` to verify the
-artifact, privacy checks, idempotent duplicates, and changed-payload conflicts. Existing
-`/api/events*` routes remain the v0 demonstration until durable multi-tenant ingest is implemented.
+`pnpm contract:validate`, `pnpm test:contract:v1`, `pnpm test:ops:v1`, and
+`pnpm test:auth:v1` verify the
+artifact, privacy checks, tenant isolation, idempotent duplicates, changed-payload conflicts,
+projection semantics, and signed-session boundaries. Existing `/api/events*` routes remain the v0
+demonstration for compatibility.
 
 ## Demo script
 
 For a fast portfolio review, the dashboard opens with a **Guided incident replay** rail directly under the header. It turns the surface into a self-explaining demo — a first-run reviewer can follow one incident end to end in well under 90 seconds.
 
-The fastest shareable entry point is [`/cockpit?replay=alibaba-p95&step=0`](https://signalops.cc/cockpit?replay=alibaba-p95&step=0). The home page secondary CTA now opens that guided replay directly instead of sending reviewers to an unframed incident detail first.
+The fastest shareable entry point is [`/cockpit?mode=demo&replay=alibaba-p95&step=0`](https://signalops.cc/cockpit?mode=demo&replay=alibaba-p95&step=0). The home page secondary CTA now opens that guided replay directly instead of sending reviewers to an unframed incident detail first.
 
 1. Pick a scenario — **Alibaba p95 spike**, **FLUX retry storm**, or **Qwen cost bleed**. Each is backed by the existing mock data, not a separate mock.
 2. Step through the rail. Every step drives the real controls (no dead overlay):
@@ -80,8 +123,8 @@ Each step also surfaces a short "technical proof" line calling out what it exerc
 ## Routes
 
 - `/` opens the product overview and operating model.
-- `/cockpit` opens the live operations dashboard.
-- `/cockpit?replay=alibaba-p95&step=0` opens the guided replay from the first step.
+- `/cockpit` opens the authenticated live operations dashboard.
+- `/cockpit?mode=demo&replay=alibaba-p95&step=0` opens the guided replay from the first step.
 - `/incidents/inc_411` opens an incident investigation route.
 
 ## Portfolio Notes

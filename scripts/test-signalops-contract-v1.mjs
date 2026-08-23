@@ -3,6 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import Ajv2020 from "ajv/dist/2020.js";
+
 import {
   SIGNALOPS_V1_LIMITS,
   canonicalSignalOpsEventTextV1,
@@ -12,6 +14,7 @@ import {
 import { createMemorySignalOpsEventStoreV1 } from "../src/lib/signalops/v1/event-store.ts";
 import { ingestSignalOpsEventsV1 } from "../src/lib/signalops/v1/ingest.ts";
 import { SIGNALOPS_V1_EVENT_TYPES } from "../src/lib/signalops/v1/types.ts";
+import ingestResponseSchema from "../schemas/ai-telemetry/v1/ingest-response.schema.json" with { type: "json" };
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const fixtureRoot = path.resolve(scriptDirectory, "../schemas/ai-telemetry/v1/fixtures");
@@ -187,6 +190,28 @@ assert.deepEqual(initialReceipt, {
   conflictEventIds: [],
   rejected: initialReceipt.rejected,
 });
+const validateIngestResponse = new Ajv2020({ allErrors: true, strict: true }).compile(
+  ingestResponseSchema,
+);
+assert.equal(
+  validateIngestResponse({
+    ok: true,
+    requestId: "req_123e4567-e89b-42d3-a456-426614174000",
+    receipt: initialReceipt,
+  }),
+  true,
+  JSON.stringify(validateIngestResponse.errors),
+);
+assert.equal(
+  validateIngestResponse({
+    ok: true,
+    requestId: "req_123e4567-e89b-42d3-a456-426614174000",
+    receipt: initialReceipt,
+    rejected: initialReceipt.rejected,
+  }),
+  false,
+  "the v1 success envelope must remain closed-world",
+);
 
 const retryReceipt = await ingestSignalOpsEventsV1({
   principal: ingestPrincipal,

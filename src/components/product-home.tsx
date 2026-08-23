@@ -149,7 +149,7 @@ export function ProductHome() {
                 <ArrowRight className="ml-2 size-4" />
               </Link>
               <Link
-                href="/cockpit?replay=alibaba-p95&step=0"
+                href="/cockpit?mode=demo&replay=alibaba-p95&step=0"
                 onClick={() =>
                   captureProductEvent("home_cta_clicked", {
                     action: "watch_replay",
