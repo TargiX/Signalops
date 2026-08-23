@@ -70,6 +70,11 @@ assert.match(
 );
 assert.match(
   chartSource,
+  /typeof value === "number"[\s\S]*?typeof value === "string" && value\.trim\(\) !== ""/,
+  "Provider failure-rate formatting must reject nullish, empty, and boolean inputs instead of coercing them to zero.",
+);
+assert.match(
+  chartSource,
   /data=\{\[chartProviderDatum\(entry\)\]\}/,
   "Shared provider chart data must not leak reusable route IDs into duplicate SVG ids.",
 );
@@ -129,6 +134,18 @@ assert.match(liveSource, /downloadOperationsCsv/);
 assert.match(liveSource, /Pause auto-refresh/);
 assert.match(liveSource, /Keyboard shortcuts/);
 assert.match(liveSource, /Skip to operations/);
+assert.match(
+  liveSource,
+  /globalThis\.crypto\?\.randomUUID\?\.\(\)/,
+  "Saved views must keep a valid local ID fallback when randomUUID is unavailable.",
+);
+for (const destination of ["quality", "fleet", "reliability"]) {
+  assert.match(
+    liveSource,
+    new RegExp(`jumpToSection\\(\\"${destination}\\"\\)`),
+    `Quick links must expand the ${destination} group before navigation.`,
+  );
+}
 assert.match(
   liveSource,
   /document\.visibilityState !== "visible"/,
@@ -523,6 +540,16 @@ assert.equal(pulse.operationDeltaRatio, 1);
 assert.equal(pulse.peaks.volume?.start, "2026-08-24T03:00:00.000Z");
 assert.equal(pulse.peaks.failureRate?.start, "2026-08-24T03:00:00.000Z");
 assert.equal(pulse.peaks.latency?.start, "2026-08-24T03:00:00.000Z");
+assert.equal(
+  summarizeSignalOpsTimelineV1([]).operationDeltaRatio,
+  null,
+  "An empty timeline must not claim an unchanged equal-duration comparison.",
+);
+assert.equal(
+  summarizeSignalOpsTimelineV1([timelineFixture[0]]).operationDeltaRatio,
+  null,
+  "A one-bucket timeline must not claim an equal-duration comparison.",
+);
 
 const savedView = createSignalOpsSavedCockpitViewV1(
   "view-1",
@@ -570,13 +597,17 @@ const snapshotFixture = {
   recentOperations: retainedRows,
   recentFailedOperations: retainedRows.filter((row) => row.status !== "succeeded"),
 };
-const brief = buildSignalOpsCockpitBriefV1(snapshotFixture, sharedView, 1, 3);
+const exportView = {
+  ...sharedView,
+  operationId: "op-failed-free-form-secret",
+};
+const brief = buildSignalOpsCockpitBriefV1(snapshotFixture, exportView, 1, 3);
 assert.match(brief, /SignalOps investigation brief/);
 assert.match(brief, /Retained view: 1 matches across 3 indexed rows/);
 assert.doesNotMatch(brief, /free-form-secret/);
 const jsonExport = buildSignalOpsCockpitJsonExportV1(
   snapshotFixture,
-  sharedView,
+  exportView,
   [retainedRows[1]],
   "2026-08-24T12:01:00.000Z",
 );

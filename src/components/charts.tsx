@@ -59,7 +59,12 @@ const tooltipStyle = {
 };
 
 function formatFailureRate(value: unknown, fractionDigits: number): string {
-  const numeric = Number(value);
+  const numeric =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && value.trim() !== ""
+        ? Number(value)
+        : Number.NaN;
   return Number.isFinite(numeric) ? `${numeric.toFixed(fractionDigits)}%` : "—";
 }
 

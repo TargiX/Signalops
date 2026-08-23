@@ -45,7 +45,7 @@ function Delta({
   if (value === null) {
     return <span className="inline-flex items-center gap-1 text-[var(--mute)]"><Minus className="size-3" /> new baseline</span>;
   }
-  const display = unit === "pp" ? value * 100 : value * 100;
+  const display = value * 100;
   const positive = display > 0;
   const negative = display < 0;
   const Icon = positive ? ArrowUpRight : negative ? ArrowDownRight : Minus;

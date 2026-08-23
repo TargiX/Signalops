@@ -130,7 +130,7 @@ const SIGNALOPS_COCKPIT_TRIAGE_V1 = new Set<SignalOpsOperationTriageV1>([
 
 const MAX_COCKPIT_DIMENSION_LENGTH_V1 = 160;
 const MAX_COCKPIT_OPERATION_ID_LENGTH_V1 = 256;
-const MAX_SAVED_COCKPIT_VIEWS_V1 = 12;
+export const MAX_SAVED_COCKPIT_VIEWS_V1 = 12;
 const MAX_SAVED_COCKPIT_VIEW_NAME_LENGTH_V1 = 60;
 
 function readSafeCockpitValueV1(
@@ -593,7 +593,10 @@ export function summarizeSignalOpsTimelineV1(
   return {
     earlier,
     recent,
-    operationDeltaRatio: ratioDeltaV1(recent.operations, earlier.operations),
+    operationDeltaRatio:
+      halfSize === 0
+        ? null
+        : ratioDeltaV1(recent.operations, earlier.operations),
     failureRateDelta:
       recent.failureRate === null || earlier.failureRate === null
         ? null

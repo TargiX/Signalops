@@ -11,7 +11,10 @@ import {
 } from "lucide-react";
 import { FormEvent, useState } from "react";
 
-import type { SignalOpsSavedCockpitViewV1 } from "@/lib/signalops/v1/cockpit-view";
+import {
+  MAX_SAVED_COCKPIT_VIEWS_V1,
+  type SignalOpsSavedCockpitViewV1,
+} from "@/lib/signalops/v1/cockpit-view";
 
 export type SignalOpsCockpitCommand = {
   id: string;
@@ -153,7 +156,7 @@ export function CockpitCommandPalette({
                 <section className="mt-3 border-t border-[var(--border-soft)] pt-3">
                   <div className="flex items-center justify-between gap-3 px-2 pb-2">
                     <p className="font-mono text-[9px] font-bold uppercase tracking-[0.1em] text-[var(--mute)]">Saved views</p>
-                    <span className="font-mono text-[9px] text-[var(--mute)]">{savedViews.length} / 12</span>
+                    <span className="font-mono text-[9px] text-[var(--mute)]">{savedViews.length} / {MAX_SAVED_COCKPIT_VIEWS_V1}</span>
                   </div>
                   <div className="grid gap-1">
                     {visibleSavedViews.map((view) => (
@@ -207,7 +210,7 @@ export function CockpitCommandPalette({
                     aria-describedby={saveError ? "saved-view-error" : undefined}
                   />
                 </label>
-                <button type="submit" disabled={savedViews.length >= 12} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[var(--accent)] px-4 text-xs font-semibold text-white transition hover:bg-[var(--accent-hover)] disabled:cursor-not-allowed disabled:opacity-45">
+                <button type="submit" disabled={savedViews.length >= MAX_SAVED_COCKPIT_VIEWS_V1} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[var(--accent)] px-4 text-xs font-semibold text-white transition hover:bg-[var(--accent-hover)] disabled:cursor-not-allowed disabled:opacity-45">
                   <Bookmark className="size-3.5" /> Save current view
                 </button>
               </div>

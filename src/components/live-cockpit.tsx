@@ -74,6 +74,7 @@ import {
   filterAndSortSignalOpsOperationsV1,
   filterAndSortSignalOpsProvidersV1,
   listSignalOpsOperationDimensionValuesV1,
+  MAX_SAVED_COCKPIT_VIEWS_V1,
   mergeSignalOpsOperationSamplesV1,
   paginateSignalOpsRowsV1,
   readSignalOpsSavedCockpitViewsV1,
@@ -472,7 +473,9 @@ function signedCount(value: number): string {
 }
 
 function createLocalSavedViewId(): string {
-  return `view-${globalThis.crypto.randomUUID().replaceAll("-", "")}`;
+  const uuid = globalThis.crypto?.randomUUID?.();
+  if (uuid) return `view-${uuid.replaceAll("-", "")}`;
+  return `view-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
 }
 
 export function LiveCockpit() {
@@ -578,7 +581,6 @@ export function LiveCockpit() {
   const overviewSectionRef = useRef<HTMLElement>(null);
   const trendsSectionRef = useRef<HTMLElement>(null);
   const reliabilitySectionRef = useRef<HTMLElement>(null);
-  const sloSectionRef = useRef<HTMLElement>(null);
   const qualitySectionRef = useRef<HTMLElement>(null);
   const routeSectionRef = useRef<HTMLElement>(null);
   const operationSectionRef = useRef<HTMLDivElement>(null);
@@ -832,13 +834,6 @@ export function LiveCockpit() {
     setComparisonOpen(false);
     void load(value, "refresh");
   }, [load, pendingRange, range]);
-
-  const scrollToSection = useCallback((ref: React.RefObject<HTMLElement | null>) => {
-    window.requestAnimationFrame(() => {
-      ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-      ref.current?.focus({ preventScroll: true });
-    });
-  }, []);
 
   const activateOperationFilter = useCallback((filter: SignalOpsOperationFilterV1) => {
     setOperationFilter(filter);
@@ -1595,7 +1590,7 @@ export function LiveCockpit() {
   }
 
   function saveCurrentView(name: string): boolean {
-    if (savedViews.length >= 12) return false;
+    if (savedViews.length >= MAX_SAVED_COCKPIT_VIEWS_V1) return false;
     const id = createLocalSavedViewId();
     const saved = createSignalOpsSavedCockpitViewV1(id, name, currentView);
     if (!saved) return false;
@@ -1839,9 +1834,9 @@ export function LiveCockpit() {
               </button>
               <span className="mx-1 h-6 w-px shrink-0 bg-[var(--border)]" />
               <button type="button" onClick={() => activateOperationFilter("failed")} className="shrink-0 rounded-lg px-2.5 py-1.5 text-[10px] font-semibold text-rose-700 transition hover:bg-rose-50">Failures <span className="ml-1 font-mono">{formatNumber(snapshot.totals.failed)}</span></button>
-              <button type="button" onClick={() => scrollToSection(qualitySectionRef)} className="shrink-0 rounded-lg px-2.5 py-1.5 text-[10px] font-semibold text-[var(--text-dim)] transition hover:bg-[var(--surface-mute)] hover:text-[var(--accent)]">Coverage <span className="ml-1 font-mono">{formatPercent(attemptCoverage)}</span></button>
-              <button type="button" onClick={() => scrollToSection(routeSectionRef)} className="shrink-0 rounded-lg px-2.5 py-1.5 text-[10px] font-semibold text-[var(--text-dim)] transition hover:bg-[var(--surface-mute)] hover:text-[var(--accent)]">Routes <span className="ml-1 font-mono">{formatNumber(snapshot.providers.length)}</span></button>
-              {sloEvaluations.length > 0 ? <button type="button" onClick={() => scrollToSection(sloSectionRef)} className="shrink-0 rounded-lg px-2.5 py-1.5 text-[10px] font-semibold text-[var(--text-dim)] transition hover:bg-[var(--surface-mute)] hover:text-[var(--accent)]">SLOs <span className="ml-1 font-mono">{formatNumber(sloEvaluations.filter((evaluation) => evaluation.status === "breached").length)}</span></button> : null}
+              <button type="button" onClick={() => jumpToSection("quality")} className="shrink-0 rounded-lg px-2.5 py-1.5 text-[10px] font-semibold text-[var(--text-dim)] transition hover:bg-[var(--surface-mute)] hover:text-[var(--accent)]">Coverage <span className="ml-1 font-mono">{formatPercent(attemptCoverage)}</span></button>
+              <button type="button" onClick={() => jumpToSection("fleet")} className="shrink-0 rounded-lg px-2.5 py-1.5 text-[10px] font-semibold text-[var(--text-dim)] transition hover:bg-[var(--surface-mute)] hover:text-[var(--accent)]">Routes <span className="ml-1 font-mono">{formatNumber(snapshot.providers.length)}</span></button>
+              {sloEvaluations.length > 0 ? <button type="button" onClick={() => jumpToSection("reliability")} className="shrink-0 rounded-lg px-2.5 py-1.5 text-[10px] font-semibold text-[var(--text-dim)] transition hover:bg-[var(--surface-mute)] hover:text-[var(--accent)]">SLOs <span className="ml-1 font-mono">{formatNumber(sloEvaluations.filter((evaluation) => evaluation.status === "breached").length)}</span></button> : null}
               <button type="button" onClick={() => activateOperationFilter("all")} className="shrink-0 rounded-lg px-2.5 py-1.5 text-[10px] font-semibold text-[var(--text-dim)] transition hover:bg-[var(--surface-mute)] hover:text-[var(--accent)]">Operations</button>
               <button type="button" onClick={() => setAllSectionsCollapsed(!allSectionsCollapsed)} className="grid size-8 shrink-0 place-items-center rounded-lg border border-[var(--border)] bg-white text-[var(--text-dim)] transition hover:border-[var(--accent)] hover:text-[var(--accent)]" aria-label={allSectionsCollapsed ? "Expand analytical sections" : "Collapse analytical sections"} title={allSectionsCollapsed ? "Expand analytical sections" : "Collapse analytical sections"}>{allSectionsCollapsed ? <PanelTopOpen className="size-3.5" /> : <PanelTopClose className="size-3.5" />}</button>
               <button type="button" onClick={() => void copyCockpitView()} className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-[var(--border)] bg-white px-2.5 text-[10px] font-semibold text-[var(--text-dim)] transition hover:border-[var(--accent)] hover:text-[var(--accent)]" title="Copy a privacy-safe link to this analysis view"><Copy className="size-3.5" /> Copy view</button>
@@ -1976,7 +1971,7 @@ export function LiveCockpit() {
           onToggle={() => toggleSection("reliability")}
         >
         {sloEvaluations.length > 0 ? (
-          <section ref={sloSectionRef} tabIndex={-1} className="mt-6 scroll-mt-24 rounded-xl border border-[var(--border)] bg-white p-5 shadow-[var(--shadow-1)] outline-none sm:p-6">
+          <section className="mt-6 rounded-xl border border-[var(--border)] bg-white p-5 shadow-[var(--shadow-1)] sm:p-6">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h2 className="flex items-center gap-2 text-sm font-semibold text-[var(--text-strong)]"><Gauge className="size-4 text-[var(--accent)]" /> Reliability objectives</h2>
