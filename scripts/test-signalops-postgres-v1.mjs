@@ -39,6 +39,13 @@ const migrations = await Promise.all([
     ),
     "utf8",
   ),
+  readFile(
+    new URL(
+      "../supabase/migrations/20260824011500_signalops_v1_slo_incident_workflow.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
 ]);
 
 const { Client } = pg;
@@ -65,7 +72,7 @@ try {
   const tables = await client.query(
     "select count(*)::integer as count from information_schema.tables where table_schema = 'public' and table_name like 'signalops_v1_%'",
   );
-  assert.equal(tables.rows[0].count, 11);
+  assert.equal(tables.rows[0].count, 13);
 
   const subjectColumn = await client.query(
     `select is_nullable
@@ -88,6 +95,19 @@ try {
     `select
       has_table_privilege('anon', 'public.signalops_v1_events', 'select') as anon_events,
       has_table_privilege('authenticated', 'public.signalops_v1_incidents', 'select') as user_incidents,
+      has_table_privilege('authenticated', 'public.signalops_v1_slo_policies', 'select') as user_slos,
+      has_table_privilege('authenticated', 'public.signalops_v1_incident_transitions', 'select') as user_history,
+      has_table_privilege('service_role', 'public.signalops_v1_slo_policies', 'update') as service_slos,
+      has_function_privilege(
+        'service_role',
+        'public.signalops_v1_persist_incident_transition(jsonb,jsonb)',
+        'execute'
+      ) as service_incident_transition,
+      has_function_privilege(
+        'authenticated',
+        'public.signalops_v1_persist_incident_transition(jsonb,jsonb)',
+        'execute'
+      ) as user_incident_transition,
       has_function_privilege(
         'service_role',
         'public.signalops_v1_apply_retention(timestamptz,timestamptz,timestamptz,timestamptz)',
@@ -97,8 +117,27 @@ try {
   assert.deepEqual(privileges.rows[0], {
     anon_events: false,
     user_incidents: false,
+    user_slos: false,
+    user_history: false,
+    service_slos: true,
+    service_incident_transition: true,
+    user_incident_transition: false,
     service_retention: true,
   });
+
+  const rowSecurity = await client.query(
+    `select relname, relrowsecurity
+     from pg_class
+     where oid in (
+       'public.signalops_v1_slo_policies'::regclass,
+       'public.signalops_v1_incident_transitions'::regclass
+     )
+     order by relname`,
+  );
+  assert.deepEqual(rowSecurity.rows, [
+    { relname: "signalops_v1_incident_transitions", relrowsecurity: true },
+    { relname: "signalops_v1_slo_policies", relrowsecurity: true },
+  ]);
 
   await client.query(
     "insert into public.signalops_v1_tenants(id, name) values ($1, 'SQL Test')",
@@ -145,6 +184,68 @@ try {
     assert.deepEqual(second.rows[0], { allowed: true, remaining: 0 });
     assert.deepEqual(third.rows[0], { allowed: false, remaining: 0 });
 
+    await client.query(
+      `insert into public.signalops_v1_slo_policies(
+        tenant_id, id, version, name, description, metric, comparator, objective,
+        warning_threshold, critical_threshold, minimum_sample, window_minutes, enabled, updated_by
+      ) values (
+        $1, 'slo_sql_reliability', 'sql-v1', 'SQL reliability', 'Migration constraint check.',
+        'operation_success_rate', 'gte', 0.99, 0.98, 0.95, 20, 1440, true, 'sql:test'
+      )`,
+      [tenantId],
+    );
+    const incidentTime = "2026-08-24T01:00:00.000Z";
+    const incidentPayload = JSON.stringify({
+      tenant_id: tenantId,
+      id: "inc_aaaaaaaaaaaaaaaaaaaaaaaa",
+      fingerprint: "c".repeat(64),
+      state: "acknowledged",
+      severity: "critical",
+      metric: "slo:operation_success_rate",
+      provider_key: null,
+      model_key: null,
+      policy_version: "sql-v1",
+      title: "SQL incident",
+      evidence: {},
+      opened_at: incidentTime,
+      last_observed_at: incidentTime,
+      resolved_at: null,
+      acknowledged_at: incidentTime,
+      acknowledged_by: "sql:test",
+      acknowledgement_note: "investigating",
+      alert_version: 1,
+    });
+    const transitionPayload = JSON.stringify({
+      tenant_id: tenantId,
+      id: "trn_bbbbbbbbbbbbbbbbbbbbbbbb",
+      incident_id: "inc_aaaaaaaaaaaaaaaaaaaaaaaa",
+      transition_type: "acknowledged",
+      actor_subject: "sql:test",
+      from_state: "open",
+      to_state: "acknowledged",
+      from_severity: "critical",
+      to_severity: "critical",
+      alert_version: 1,
+      evidence: {},
+      created_at: incidentTime,
+    });
+    for (let retry = 0; retry < 2; retry += 1) {
+      await client.query(
+        "select public.signalops_v1_persist_incident_transition($1::jsonb, $2::jsonb)",
+        [incidentPayload, transitionPayload],
+      );
+    }
+    const workflow = await client.query(
+      `select incidents.state, count(transitions.id)::integer as transitions
+       from public.signalops_v1_incidents as incidents
+       left join public.signalops_v1_incident_transitions as transitions
+         on transitions.tenant_id = incidents.tenant_id and transitions.incident_id = incidents.id
+       where incidents.tenant_id = $1 and incidents.id = 'inc_aaaaaaaaaaaaaaaaaaaaaaaa'
+       group by incidents.state`,
+      [tenantId],
+    );
+    assert.deepEqual(workflow.rows, [{ state: "acknowledged", transitions: 1 }]);
+
     const watermark = await client.query(
       "select event_count::integer, event_id from public.signalops_v1_event_watermark($1, now() - interval '1 day')",
       [tenantId],
@@ -173,10 +274,20 @@ try {
 } finally {
   try {
     await client.query("reset role");
-    await client.query("delete from public.signalops_v1_tenants where id = $1", [tenantId]);
-    await client.query("delete from public.signalops_v1_rate_limit_buckets where bucket_key = $1", [
-      bucketKey,
-    ]);
+    const cleanupTargets = await client.query(
+      `select
+        to_regclass('public.signalops_v1_tenants') is not null as tenants,
+        to_regclass('public.signalops_v1_rate_limit_buckets') is not null as rate_limits`,
+    );
+    if (cleanupTargets.rows[0].tenants) {
+      await client.query("delete from public.signalops_v1_tenants where id = $1", [tenantId]);
+    }
+    if (cleanupTargets.rows[0].rate_limits) {
+      await client.query(
+        "delete from public.signalops_v1_rate_limit_buckets where bucket_key = $1",
+        [bucketKey],
+      );
+    }
   } finally {
     await client.end();
   }

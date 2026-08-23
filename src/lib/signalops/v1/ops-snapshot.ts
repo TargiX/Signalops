@@ -161,6 +161,7 @@ export type SignalOpsOpsSnapshotV1 = {
     successRate: number | null;
     p95DurationMs: number | null;
     retryableFailures: number;
+    operationsWithDuration: number;
     operationsWithAttemptTelemetry: number;
     costByCurrency: SignalOpsCurrencyCostV1[];
   };
@@ -751,6 +752,7 @@ export function buildSignalOpsOpsSnapshotV1(input: {
         terminalOperations === 0 ? null : succeededOperations / terminalOperations,
       p95DurationMs: percentile95(operationDurations),
       retryableFailures,
+      operationsWithDuration: operationDurations.length,
       operationsWithAttemptTelemetry,
       costByCurrency: costRows(totalCosts),
     },

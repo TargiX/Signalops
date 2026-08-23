@@ -1,4 +1,5 @@
 import { IncidentDetail } from "@/components/incident-detail";
+import { LiveIncidentDetail } from "@/components/live-incident-detail";
 import { getOpsSnapshot } from "@/lib/mock-data";
 
 export function generateStaticParams() {
@@ -13,6 +14,13 @@ export default async function IncidentPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+  const demoIncident = getOpsSnapshot("24h").incidents.some(
+    (incident) => incident.id === id,
+  );
 
-  return <IncidentDetail incidentId={id} />;
+  return demoIncident ? (
+    <IncidentDetail incidentId={id} />
+  ) : (
+    <LiveIncidentDetail incidentId={id} />
+  );
 }

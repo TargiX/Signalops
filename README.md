@@ -55,8 +55,11 @@ workspace password, session secret, and ingest token before testing live mode.
 - `POST /v1/events/validate` validates the same contract without storing it.
 - `GET /v1/ops/snapshot?range=24h|7d|30d|90d` requires a signed operator session.
 - `GET /v1/ops/operations/:operationId` returns a tenant-scoped, privacy-safe operation trace.
-- `GET /v1/incidents` lists tenant incidents; ingest and the authenticated internal evaluator
-  maintain their open/resolved lifecycle.
+- `GET /v1/slos` returns versioned tenant reliability objectives and their current evaluations;
+  owners can update bounded policy thresholds through the same route.
+- `GET /v1/incidents` lists tenant incidents; `GET/PATCH /v1/incidents/:id` exposes evidence,
+  append-only lifecycle history, and owner/operator acknowledgement. The authenticated evaluator
+  alone maintains evidence-driven open/resolved transitions.
 - `/schemas/ai-telemetry/v1` publishes the exact JSON Schema named by canonical events.
 - `/schemas/ai-telemetry/v1/ingest-response` publishes the closed success-envelope schema used by
   producers to reconcile stored, duplicate, conflicting, and rejected event IDs.
@@ -133,7 +136,9 @@ Each step also surfaces a short "technical proof" line calling out what it exerc
 - `/` opens the product overview and operating model.
 - `/cockpit` opens the authenticated live operations dashboard.
 - `/cockpit?mode=demo&replay=alibaba-p95&step=0` opens the guided replay from the first step.
-- `/incidents/inc_411` opens an incident investigation route.
+- `/incidents/inc_411` opens the synthetic incident investigation route.
+- `/incidents/inc_<canonical fingerprint>` opens a tenant-scoped live incident with measured
+  evidence, acknowledgement ownership, and recovery history.
 
 ## Portfolio Notes
 

@@ -6,9 +6,22 @@ import {
   getSignalOpsSupabaseConfigV1,
   signalOpsSupabaseRestRequestV1,
 } from "./supabase.ts";
+import {
+  defaultSignalOpsSloPoliciesV1,
+  evaluateSignalOpsSloPoliciesV1,
+  type SignalOpsSloPolicyV1,
+} from "./slo.ts";
 
 export type SignalOpsIncidentSeverityV1 = "warning" | "critical";
-export type SignalOpsIncidentStateV1 = "open" | "resolved";
+export type SignalOpsIncidentStateV1 = "open" | "acknowledged" | "resolved";
+export type SignalOpsIncidentTransitionTypeV1 =
+  | "opened"
+  | "reopened"
+  | "escalated"
+  | "deescalated"
+  | "acknowledged"
+  | "unacknowledged"
+  | "resolved";
 
 export type SignalOpsIncidentEvidenceV1 = Record<string, string | number | boolean | null>;
 
@@ -27,12 +40,37 @@ export type SignalOpsIncidentV1 = {
   openedAt: string;
   lastObservedAt: string;
   resolvedAt: string | null;
+  acknowledgedAt: string | null;
+  acknowledgedBy: string | null;
+  acknowledgementNote: string | null;
   alertVersion: number;
+};
+
+export type SignalOpsIncidentTransitionV1 = {
+  tenantId: string;
+  id: string;
+  incidentId: string;
+  type: SignalOpsIncidentTransitionTypeV1;
+  actorSubject: string;
+  fromState: SignalOpsIncidentStateV1 | null;
+  toState: SignalOpsIncidentStateV1;
+  fromSeverity: SignalOpsIncidentSeverityV1 | null;
+  toSeverity: SignalOpsIncidentSeverityV1;
+  alertVersion: number;
+  evidence: SignalOpsIncidentEvidenceV1;
+  createdAt: string;
 };
 
 export type SignalOpsIncidentDecisionV1 = Omit<
   SignalOpsIncidentV1,
-  "state" | "openedAt" | "lastObservedAt" | "resolvedAt" | "alertVersion"
+  | "state"
+  | "openedAt"
+  | "lastObservedAt"
+  | "resolvedAt"
+  | "acknowledgedAt"
+  | "acknowledgedBy"
+  | "acknowledgementNote"
+  | "alertVersion"
 >;
 
 type IncidentRow = {
@@ -50,16 +88,38 @@ type IncidentRow = {
   opened_at: string;
   last_observed_at: string;
   resolved_at: string | null;
+  acknowledged_at: string | null;
+  acknowledged_by: string | null;
+  acknowledgement_note: string | null;
   alert_version: number;
+};
+
+type IncidentTransitionRow = {
+  tenant_id: string;
+  id: string;
+  incident_id: string;
+  transition_type: SignalOpsIncidentTransitionTypeV1;
+  actor_subject: string;
+  from_state: SignalOpsIncidentStateV1 | null;
+  to_state: SignalOpsIncidentStateV1;
+  from_severity: SignalOpsIncidentSeverityV1 | null;
+  to_severity: SignalOpsIncidentSeverityV1;
+  alert_version: number;
+  evidence: SignalOpsIncidentEvidenceV1;
+  created_at: string;
 };
 
 const globalIncidentState = globalThis as typeof globalThis & {
   __signalOpsIncidentsV1?: Map<string, SignalOpsIncidentV1>;
+  __signalOpsIncidentTransitionsV1?: Map<string, SignalOpsIncidentTransitionV1>;
   __signalOpsAlertClaimsV1?: Set<string>;
 };
 const localIncidents = globalIncidentState.__signalOpsIncidentsV1 ?? new Map();
+const localIncidentTransitions =
+  globalIncidentState.__signalOpsIncidentTransitionsV1 ?? new Map();
 const localAlertClaims = globalIncidentState.__signalOpsAlertClaimsV1 ?? new Set();
 globalIncidentState.__signalOpsIncidentsV1 = localIncidents;
+globalIncidentState.__signalOpsIncidentTransitionsV1 = localIncidentTransitions;
 globalIncidentState.__signalOpsAlertClaimsV1 = localAlertClaims;
 
 function fingerprint(parts: readonly string[]): string {
@@ -79,8 +139,35 @@ function decision(input: Omit<SignalOpsIncidentDecisionV1, "id" | "fingerprint">
 
 export function evaluateSignalOpsIncidentsV1(
   snapshot: SignalOpsOpsSnapshotV1,
+  policies: readonly SignalOpsSloPolicyV1[] = defaultSignalOpsSloPoliciesV1(
+    snapshot.tenant.id,
+  ),
 ): SignalOpsIncidentDecisionV1[] {
   const decisions: SignalOpsIncidentDecisionV1[] = [];
+  const sloEvaluations = evaluateSignalOpsSloPoliciesV1({ snapshot, policies });
+  for (const evaluation of sloEvaluations) {
+    if (evaluation.status !== "breached" || !evaluation.severity) continue;
+    decisions.push(
+      decision({
+        tenantId: snapshot.tenant.id,
+        severity: evaluation.severity,
+        metric: `slo:${evaluation.policy.metric}`,
+        policyVersion: evaluation.policy.version,
+        title: `${evaluation.policy.name} SLO breached`,
+        evidence: {
+          sloId: evaluation.policy.id,
+          observedValue: evaluation.observedValue,
+          objective: evaluation.policy.objective,
+          warningThreshold: evaluation.policy.warningThreshold,
+          criticalThreshold: evaluation.policy.criticalThreshold,
+          comparator: evaluation.policy.comparator,
+          sampleSize: evaluation.sampleSize,
+          minimumSample: evaluation.policy.minimumSample,
+          windowMinutes: evaluation.policy.windowMinutes,
+        },
+      }),
+    );
+  }
   for (const provider of snapshot.providers) {
     if (provider.health.status !== "degraded" && provider.health.status !== "incident") continue;
     const severity: SignalOpsIncidentSeverityV1 =
@@ -159,6 +246,9 @@ function fromRow(row: IncidentRow): SignalOpsIncidentV1 {
     openedAt: row.opened_at,
     lastObservedAt: row.last_observed_at,
     resolvedAt: row.resolved_at,
+    acknowledgedAt: row.acknowledged_at,
+    acknowledgedBy: row.acknowledged_by,
+    acknowledgementNote: row.acknowledgement_note,
     alertVersion: row.alert_version,
   };
 }
@@ -179,6 +269,9 @@ function toRow(incident: SignalOpsIncidentV1): IncidentRow {
     opened_at: incident.openedAt,
     last_observed_at: incident.lastObservedAt,
     resolved_at: incident.resolvedAt,
+    acknowledged_at: incident.acknowledgedAt,
+    acknowledged_by: incident.acknowledgedBy,
+    acknowledgement_note: incident.acknowledgementNote,
     alert_version: incident.alertVersion,
   };
 }
@@ -186,7 +279,9 @@ function toRow(incident: SignalOpsIncidentV1): IncidentRow {
 async function listStoredIncidents(tenantId: string): Promise<SignalOpsIncidentV1[]> {
   const config = getSignalOpsSupabaseConfigV1();
   if (!config) {
-    return [...localIncidents.values()].filter((incident) => incident.tenantId === tenantId);
+    return [...localIncidents.values()]
+      .filter((incident) => incident.tenantId === tenantId)
+      .sort((left, right) => right.lastObservedAt.localeCompare(left.lastObservedAt));
   }
   const filters = new URLSearchParams({
     select: "*",
@@ -218,6 +313,115 @@ async function storeIncident(incident: SignalOpsIncidentV1): Promise<void> {
   );
 }
 
+function transitionFromRow(row: IncidentTransitionRow): SignalOpsIncidentTransitionV1 {
+  return {
+    tenantId: row.tenant_id,
+    id: row.id,
+    incidentId: row.incident_id,
+    type: row.transition_type,
+    actorSubject: row.actor_subject,
+    fromState: row.from_state,
+    toState: row.to_state,
+    fromSeverity: row.from_severity,
+    toSeverity: row.to_severity,
+    alertVersion: row.alert_version,
+    evidence: row.evidence,
+    createdAt: row.created_at,
+  };
+}
+
+function transitionToRow(transition: SignalOpsIncidentTransitionV1): IncidentTransitionRow {
+  return {
+    tenant_id: transition.tenantId,
+    id: transition.id,
+    incident_id: transition.incidentId,
+    transition_type: transition.type,
+    actor_subject: transition.actorSubject,
+    from_state: transition.fromState,
+    to_state: transition.toState,
+    from_severity: transition.fromSeverity,
+    to_severity: transition.toSeverity,
+    alert_version: transition.alertVersion,
+    evidence: transition.evidence,
+    created_at: transition.createdAt,
+  };
+}
+
+function createIncidentTransition(
+  input: Omit<SignalOpsIncidentTransitionV1, "id">,
+): SignalOpsIncidentTransitionV1 {
+  const digest = fingerprint([
+    input.tenantId,
+    input.incidentId,
+    input.type,
+    String(input.alertVersion),
+    input.actorSubject,
+    input.createdAt,
+  ]);
+  return {
+    ...input,
+    id: `trn_${digest.slice(0, 24)}`,
+  };
+}
+
+async function storeIncidentWithTransition(
+  incident: SignalOpsIncidentV1,
+  input: Omit<SignalOpsIncidentTransitionV1, "id">,
+): Promise<void> {
+  const transition = createIncidentTransition(input);
+  const config = getSignalOpsSupabaseConfigV1();
+  if (!config) {
+    localIncidents.set(`${incident.tenantId}:${incident.id}`, structuredClone(incident));
+    localIncidentTransitions.set(
+      `${transition.tenantId}:${transition.id}`,
+      structuredClone(transition),
+    );
+    return;
+  }
+  await signalOpsSupabaseRestRequestV1<null>(
+    config,
+    "rpc/signalops_v1_persist_incident_transition",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        p_incident: toRow(incident),
+        p_transition: transitionToRow(transition),
+      }),
+    },
+  );
+}
+
+export async function listSignalOpsIncidentTransitionsV1(input: {
+  tenantId: string;
+  incidentId: string;
+  limit?: number;
+}): Promise<SignalOpsIncidentTransitionV1[]> {
+  const limit = Math.max(1, Math.min(input.limit ?? 100, 500));
+  const config = getSignalOpsSupabaseConfigV1();
+  if (!config) {
+    return [...localIncidentTransitions.values()]
+      .filter(
+        (transition) =>
+          transition.tenantId === input.tenantId &&
+          transition.incidentId === input.incidentId,
+      )
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+      .slice(-limit);
+  }
+  const filters = new URLSearchParams({
+    select: "*",
+    tenant_id: `eq.${input.tenantId}`,
+    incident_id: `eq.${input.incidentId}`,
+    order: "created_at.desc",
+    limit: String(limit),
+  });
+  const rows = await signalOpsSupabaseRestRequestV1<IncidentTransitionRow[]>(
+    config,
+    `signalops_v1_incident_transitions?${filters}`,
+  );
+  return rows.map(transitionFromRow).reverse();
+}
+
 export async function syncSignalOpsIncidentsV1(input: {
   tenantId: string;
   decisions: readonly SignalOpsIncidentDecisionV1[];
@@ -231,23 +435,54 @@ export async function syncSignalOpsIncidentsV1(input: {
 
   for (const item of input.decisions) {
     const previous = existingById.get(item.id);
-    const transitioned =
-      !previous || previous.state === "resolved" || previous.severity !== item.severity;
+    const transitionType: SignalOpsIncidentTransitionTypeV1 | null = !previous
+      ? "opened"
+      : previous.state === "resolved"
+        ? "reopened"
+        : previous.severity !== item.severity
+          ? item.severity === "critical"
+            ? "escalated"
+            : "deescalated"
+          : null;
+    const transitioned = transitionType !== null;
+    const reopened = previous?.state === "resolved";
     const incident: SignalOpsIncidentV1 = {
       ...item,
-      state: "open",
-      openedAt: !previous || previous.state === "resolved" ? now : previous.openedAt,
+      state:
+        previous?.state === "acknowledged" && !reopened ? "acknowledged" : "open",
+      openedAt: !previous || reopened ? now : previous.openedAt,
       lastObservedAt: now,
       resolvedAt: null,
-      alertVersion: transitioned ? (previous?.alertVersion ?? 0) + 1 : previous.alertVersion,
+      acknowledgedAt: reopened ? null : (previous?.acknowledgedAt ?? null),
+      acknowledgedBy: reopened ? null : (previous?.acknowledgedBy ?? null),
+      acknowledgementNote: reopened ? null : (previous?.acknowledgementNote ?? null),
+      alertVersion: transitioned
+        ? (previous?.alertVersion ?? 0) + 1
+        : (previous?.alertVersion ?? 1),
     };
-    await storeIncident(incident);
+    if (transitionType) {
+      await storeIncidentWithTransition(incident, {
+        tenantId: incident.tenantId,
+        incidentId: incident.id,
+        type: transitionType,
+        actorSubject: "system:incident-evaluator",
+        fromState: previous?.state ?? null,
+        toState: incident.state,
+        fromSeverity: previous?.severity ?? null,
+        toSeverity: incident.severity,
+        alertVersion: incident.alertVersion,
+        evidence: incident.evidence,
+        createdAt: now,
+      });
+      transitions.push(incident);
+    } else {
+      await storeIncident(incident);
+    }
     existingById.set(incident.id, incident);
-    if (transitioned) transitions.push(incident);
   }
 
   for (const previous of existing) {
-    if (previous.state !== "open" || activeIds.has(previous.id)) continue;
+    if (previous.state === "resolved" || activeIds.has(previous.id)) continue;
     const resolved: SignalOpsIncidentV1 = {
       ...previous,
       state: "resolved",
@@ -255,7 +490,19 @@ export async function syncSignalOpsIncidentsV1(input: {
       resolvedAt: now,
       alertVersion: previous.alertVersion + 1,
     };
-    await storeIncident(resolved);
+    await storeIncidentWithTransition(resolved, {
+      tenantId: resolved.tenantId,
+      incidentId: resolved.id,
+      type: "resolved",
+      actorSubject: "system:incident-evaluator",
+      fromState: previous.state,
+      toState: resolved.state,
+      fromSeverity: previous.severity,
+      toSeverity: resolved.severity,
+      alertVersion: resolved.alertVersion,
+      evidence: resolved.evidence,
+      createdAt: now,
+    });
     existingById.set(resolved.id, resolved);
     transitions.push(resolved);
   }
@@ -270,11 +517,17 @@ export async function syncSignalOpsIncidentsV1(input: {
 
 export async function listSignalOpsIncidentsV1(input: {
   tenantId: string;
-  state?: SignalOpsIncidentStateV1;
+  state?: SignalOpsIncidentStateV1 | "active";
   limit?: number;
 }): Promise<SignalOpsIncidentV1[]> {
   return (await listStoredIncidents(input.tenantId))
-    .filter((incident) => !input.state || incident.state === input.state)
+    .filter(
+      (incident) =>
+        !input.state ||
+        (input.state === "active"
+          ? incident.state !== "resolved"
+          : incident.state === input.state),
+    )
     .slice(0, Math.max(1, Math.min(input.limit ?? 100, 500)));
 }
 
@@ -287,6 +540,60 @@ export async function getSignalOpsIncidentV1(input: {
       (incident) => incident.id === input.incidentId,
     ) ?? null
   );
+}
+
+function normalizeAcknowledgementNote(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const note = value.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
+  return note ? note.slice(0, 500) : null;
+}
+
+export async function setSignalOpsIncidentAcknowledgementV1(input: {
+  tenantId: string;
+  incidentId: string;
+  actorSubject: string;
+  acknowledged: boolean;
+  note?: string | null;
+  now?: Date;
+}): Promise<{ incident: SignalOpsIncidentV1 | null; changed: boolean }> {
+  const previous = await getSignalOpsIncidentV1({
+    tenantId: input.tenantId,
+    incidentId: input.incidentId,
+  });
+  if (!previous || previous.state === "resolved") {
+    return { incident: previous, changed: false };
+  }
+  const targetState: SignalOpsIncidentStateV1 = input.acknowledged
+    ? "acknowledged"
+    : "open";
+  if (previous.state === targetState) return { incident: previous, changed: false };
+
+  const now = (input.now ?? new Date()).toISOString();
+  const incident: SignalOpsIncidentV1 = {
+    ...previous,
+    state: targetState,
+    acknowledgedAt: input.acknowledged ? now : null,
+    acknowledgedBy: input.acknowledged ? input.actorSubject.slice(0, 200) : null,
+    acknowledgementNote: input.acknowledged
+      ? normalizeAcknowledgementNote(input.note)
+      : null,
+  };
+  await storeIncidentWithTransition(incident, {
+    tenantId: incident.tenantId,
+    incidentId: incident.id,
+    type: input.acknowledged ? "acknowledged" : "unacknowledged",
+    actorSubject: input.actorSubject.slice(0, 200),
+    fromState: previous.state,
+    toState: incident.state,
+    fromSeverity: previous.severity,
+    toSeverity: incident.severity,
+    alertVersion: incident.alertVersion,
+    evidence: {
+      note: incident.acknowledgementNote,
+    },
+    createdAt: now,
+  });
+  return { incident, changed: true };
 }
 
 function webhookConfig(): { url: string; secret: string } | null {
