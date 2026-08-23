@@ -30,8 +30,10 @@ import {
 import { OperationTraceDrawer } from "@/components/operation-trace-drawer";
 import type { SignalOpsIncidentV1 } from "@/lib/signalops/v1/incidents";
 import {
+  applySignalOpsCockpitRangeV1,
   filterSignalOpsOperationsV1,
   paginateSignalOpsRowsV1,
+  readSignalOpsCockpitRangeV1,
   type SignalOpsOperationFilterV1,
 } from "@/lib/signalops/v1/cockpit-view";
 import type {
@@ -85,6 +87,9 @@ const chartColors = ["#3459df", "#24a17e", "#e6a23c", "#d24b63", "#7b61d1", "#16
 const MODEL_PAGE_SIZE = 5;
 const PROVIDER_PAGE_SIZE = 5;
 const OPERATION_PAGE_SIZE = 10;
+const cockpitRanges = ["24h", "7d", "30d", "90d"] as const;
+
+type LoadMode = "initial" | "refresh";
 
 type SelectedChartCost = {
   currency: string;
@@ -221,8 +226,24 @@ function authErrorMessage(): string {
   return messages[code] ?? "Sign-in could not be completed.";
 }
 
+function replaceCockpitRangeUrl(range: SignalOpsOpsRangeV1): void {
+  if (typeof window === "undefined") return;
+  try {
+    const nextUrl = applySignalOpsCockpitRangeV1(new URL(window.location.href), range);
+    window.history.replaceState(window.history.state, "", nextUrl);
+  } catch {
+    // URL state is an enhancement; live analysis must keep working if history is unavailable.
+  }
+}
+
 export function LiveCockpit() {
-  const [range, setRange] = useState<SignalOpsOpsRangeV1>("90d");
+  const [range, setRange] = useState<SignalOpsOpsRangeV1>(() =>
+    typeof window === "undefined"
+      ? "90d"
+      : readSignalOpsCockpitRangeV1(window.location.search),
+  );
+  const initialRangeRef = useRef(range);
+  const [pendingRange, setPendingRange] = useState<SignalOpsOpsRangeV1 | null>(null);
   const [snapshot, setSnapshot] = useState<SignalOpsOpsSnapshotV1 | null>(null);
   const [incidents, setIncidents] = useState<SignalOpsIncidentV1[]>([]);
   const [sloEvaluations, setSloEvaluations] = useState<SignalOpsSloEvaluationV1[]>([]);
@@ -234,26 +255,58 @@ export function LiveCockpit() {
   const [loginNotice, setLoginNotice] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [switchingTenant, setSwitchingTenant] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState("");
   const [operationFilter, setOperationFilter] = useState<SignalOpsOperationFilterV1>("all");
   const [operationPage, setOperationPage] = useState(1);
   const [modelPage, setModelPage] = useState(1);
   const [providerPage, setProviderPage] = useState(1);
   const [selectedOperationId, setSelectedOperationId] = useState<string | null>(null);
+  const snapshotRef = useRef<SignalOpsOpsSnapshotV1 | null>(null);
+  const activeLoadRef = useRef<AbortController | null>(null);
+  const loadSequenceRef = useRef(0);
+  const sloSectionRef = useRef<HTMLElement>(null);
+  const qualitySectionRef = useRef<HTMLElement>(null);
+  const routeSectionRef = useRef<HTMLElement>(null);
   const operationSectionRef = useRef<HTMLDivElement>(null);
   const operationTraceTriggerRef = useRef<HTMLElement | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (
+    requestedRange: SignalOpsOpsRangeV1,
+    mode: LoadMode = "refresh",
+  ) => {
+    const sequence = loadSequenceRef.current + 1;
+    loadSequenceRef.current = sequence;
+    activeLoadRef.current?.abort();
+    const controller = new AbortController();
+    activeLoadRef.current = controller;
+
+    if (mode === "initial" || !snapshotRef.current) {
+      setState("loading");
+    } else {
+      setIsRefreshing(true);
+      setRefreshError("");
+    }
+
     try {
       const [snapshotResponse, sessionResponse] = await Promise.all([
-        fetch(`/v1/ops/snapshot?range=${range}`, { cache: "no-store" }),
-        fetch("/api/cockpit/session", { cache: "no-store" }),
+        fetch(`/v1/ops/snapshot?range=${requestedRange}`, {
+          cache: "no-store",
+          signal: controller.signal,
+        }),
+        fetch("/api/cockpit/session", {
+          cache: "no-store",
+          signal: controller.signal,
+        }),
       ]);
       const [snapshotBody, sessionBody] = (await Promise.all([
         snapshotResponse.json(),
         sessionResponse.json(),
       ])) as [SnapshotResponse, SessionResponse];
+      if (sequence !== loadSequenceRef.current) return;
       setSession(sessionBody);
       if (snapshotResponse.status === 401) {
+        snapshotRef.current = null;
         setSnapshot(null);
         setIncidents([]);
         setSloEvaluations([]);
@@ -261,37 +314,64 @@ export function LiveCockpit() {
         return;
       }
       if (!snapshotResponse.ok || !snapshotBody.ok) throw new Error("snapshot unavailable");
+      snapshotRef.current = snapshotBody.snapshot;
       setSnapshot(snapshotBody.snapshot);
+      setRange(snapshotBody.snapshot.range);
+      replaceCockpitRangeUrl(snapshotBody.snapshot.range);
       setState("ready");
 
       const [incidentsResponse, slosResponse] = await Promise.all([
-        fetch("/v1/incidents?state=active&limit=20", { cache: "no-store" }),
-        fetch("/v1/slos", { cache: "no-store" }),
+        fetch("/v1/incidents?state=active&limit=20", {
+          cache: "no-store",
+          signal: controller.signal,
+        }),
+        fetch("/v1/slos", { cache: "no-store", signal: controller.signal }),
       ]);
       const [incidentsBody, slosBody] = (await Promise.all([
         incidentsResponse.json(),
         slosResponse.json(),
       ])) as [IncidentsResponse, SlosResponse];
+      if (sequence !== loadSequenceRef.current) return;
       setIncidents(incidentsResponse.ok && incidentsBody.ok ? incidentsBody.incidents : []);
       setSloEvaluations(slosResponse.ok && slosBody.ok ? slosBody.evaluations : []);
-    } catch {
-      setState("error");
+    } catch (error) {
+      if (
+        sequence !== loadSequenceRef.current ||
+        (error instanceof Error && error.name === "AbortError")
+      ) {
+        return;
+      }
+      if (snapshotRef.current && mode === "refresh") {
+        setRefreshError("Couldn’t refresh. Showing the last complete snapshot.");
+        setState("ready");
+      } else {
+        setState("error");
+      }
+    } finally {
+      if (sequence === loadSequenceRef.current) {
+        activeLoadRef.current = null;
+        setIsRefreshing(false);
+        setPendingRange(null);
+      }
     }
-  }, [range]);
+  }, []);
 
   useEffect(() => {
     const initial = window.setTimeout(() => {
       setLoginError(authErrorMessage());
-      void load();
+      void load(initialRangeRef.current, "initial");
     }, 0);
-    return () => window.clearTimeout(initial);
+    return () => {
+      window.clearTimeout(initial);
+      activeLoadRef.current?.abort();
+    };
   }, [load]);
 
   useEffect(() => {
-    if (state !== "ready") return;
-    const interval = window.setInterval(() => void load(), 10_000);
+    if (state !== "ready" || isRefreshing) return;
+    const interval = window.setInterval(() => void load(range, "refresh"), 10_000);
     return () => window.clearInterval(interval);
-  }, [load, state]);
+  }, [isRefreshing, load, range, state]);
 
   async function login(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -317,7 +397,7 @@ export function LiveCockpit() {
         return;
       }
       setPassword("");
-      await load();
+      await load(range, "initial");
     } catch {
       setLoginError("SignalOps could not be reached. Please try again.");
     } finally {
@@ -366,8 +446,10 @@ export function LiveCockpit() {
         body: JSON.stringify({ tenantId }),
       });
       if (!response.ok) throw new Error("tenant switch rejected");
+      snapshotRef.current = null;
+      setSnapshot(null);
       setState("loading");
-      await load();
+      await load(range, "initial");
     } catch {
       setState("error");
     } finally {
@@ -376,13 +458,32 @@ export function LiveCockpit() {
   }
 
   async function logout() {
+    activeLoadRef.current?.abort();
     await fetch("/api/cockpit/session", { method: "DELETE" });
+    snapshotRef.current = null;
     setSnapshot(null);
     setIncidents([]);
     setSloEvaluations([]);
     setSelectedOperationId(null);
     setState("unauthorized");
-    await load();
+    await load(range, "initial");
+  }
+
+  function selectRange(value: SignalOpsOpsRangeV1) {
+    if (value === pendingRange || (!pendingRange && value === range)) return;
+    setPendingRange(value);
+    setSelectedOperationId(null);
+    setOperationPage(1);
+    setModelPage(1);
+    setProviderPage(1);
+    void load(value, "refresh");
+  }
+
+  function scrollToSection(ref: React.RefObject<HTMLElement | null>) {
+    window.requestAnimationFrame(() => {
+      ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      ref.current?.focus({ preventScroll: true });
+    });
   }
 
   function activateOperationFilter(filter: SignalOpsOperationFilterV1) {
@@ -507,7 +608,7 @@ export function LiveCockpit() {
           <TriangleAlert className="mx-auto size-6 text-rose-600" />
           <h1 className="mt-3 text-lg font-semibold">Live storage is unavailable</h1>
           <p className="mt-2 text-sm text-[var(--text-dim)]">Your session is intact, but SignalOps could not read the canonical event projection.</p>
-          <button className="mt-5 rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white" onClick={() => void load()}>Try again</button>
+          <button className="mt-5 rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white" onClick={() => void load(range, "initial")}>Try again</button>
         </section>
       </main>
     );
@@ -517,9 +618,10 @@ export function LiveCockpit() {
     snapshot.dataQuality.contradictoryTerminals +
     snapshot.dataQuality.identityCollisions +
     snapshot.dataQuality.idempotencyConflicts;
+  const displayedRange = snapshot.range;
   const selectedChartCost = selectChartCost(snapshot.totals.costByCurrency);
   const timelineData: ChartTimeBucket[] = snapshot.timeline.map((bucket) => ({
-    time: timelineLabel(bucket.start, range),
+    time: timelineLabel(bucket.start, displayedRange),
     volume: bucket.operations,
     failures: bucket.failedOperations,
     latency: bucket.p95DurationMs,
@@ -635,12 +737,12 @@ export function LiveCockpit() {
               </select>
             ) : null}
             <a href="/cockpit?mode=demo" className="rounded-lg border border-[var(--border)] bg-white px-3 py-2 text-xs font-semibold text-[var(--text-dim)] hover:text-[var(--accent)]">Demo</a>
-            <button onClick={() => void load()} className="grid size-9 place-items-center rounded-lg border border-[var(--border)] bg-white text-[var(--text-dim)] hover:text-[var(--accent)]" aria-label="Refresh"><RefreshCw className="size-4" /></button>
+            <button onClick={() => void load(range, "refresh")} disabled={isRefreshing} className="grid size-9 place-items-center rounded-lg border border-[var(--border)] bg-white text-[var(--text-dim)] hover:text-[var(--accent)] disabled:cursor-wait disabled:opacity-50" aria-label="Refresh"><RefreshCw className={`size-4 ${isRefreshing ? "animate-spin" : ""}`} /></button>
             <button onClick={() => void logout()} className="grid size-9 place-items-center rounded-lg border border-[var(--border)] bg-white text-[var(--text-dim)] hover:text-rose-600" aria-label="Sign out"><LogOut className="size-4" /></button>
           </div>
         </header>
 
-        <section className="mt-7 flex flex-wrap items-end justify-between gap-4">
+        <section className="mt-7">
           <div>
             <p className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--accent)]">Canonical AI telemetry v1</p>
             <h1 className="mt-2 text-3xl font-semibold tracking-tight text-[var(--text-strong)] sm:text-4xl">Generation operations</h1>
@@ -650,10 +752,47 @@ export function LiveCockpit() {
               {snapshot.environments.map((environment) => <span key={environment} className="rounded-full border border-[var(--border)] bg-white px-2 py-0.5 font-mono text-[10px]">{environment}</span>)}
             </div>
           </div>
-          <div className="flex rounded-lg border border-[var(--border)] bg-white p-1 shadow-sm">
-            {(["24h", "7d", "30d", "90d"] as const).map((value) => (
-              <button key={value} onClick={() => { setState("loading"); setSelectedOperationId(null); setOperationPage(1); setModelPage(1); setProviderPage(1); setRange(value); }} className={`rounded-md px-3 py-1.5 text-xs font-semibold ${range === value ? "bg-[var(--accent)] text-white" : "text-[var(--text-dim)] hover:text-[var(--text)]"}`}>{value}</button>
-            ))}
+        </section>
+
+        <section
+          aria-label="Analysis controls"
+          aria-busy={isRefreshing}
+          className="sticky top-2 z-30 mt-5"
+        >
+          <div className="rounded-xl border border-white/80 bg-white/90 p-1.5 shadow-[0_10px_32px_rgba(34,55,105,0.14)] ring-1 ring-[var(--border)] backdrop-blur-xl">
+            <div className="flex min-h-11 items-center gap-2 overflow-x-auto px-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              <span className="shrink-0 pl-1 font-mono text-[9px] font-bold uppercase tracking-[0.1em] text-[var(--mute)]">Window</span>
+              <div className="flex shrink-0 rounded-lg bg-[var(--surface-mute)] p-1" aria-label="Analysis window">
+                {cockpitRanges.map((value) => {
+                  const selectedRange = pendingRange ?? range;
+                  return (
+                    <button
+                      key={value}
+                      type="button"
+                      aria-pressed={selectedRange === value}
+                      onClick={() => selectRange(value)}
+                      className={`rounded-md px-2.5 py-1.5 text-[10px] font-semibold transition ${selectedRange === value ? "bg-[var(--accent)] text-white shadow-sm" : "text-[var(--text-dim)] hover:bg-white hover:text-[var(--text)]"}`}
+                    >
+                      {value}
+                    </button>
+                  );
+                })}
+              </div>
+              <span className="mx-1 h-6 w-px shrink-0 bg-[var(--border)]" />
+              <div aria-live="polite" className={`flex shrink-0 items-center gap-2 rounded-lg px-2.5 py-1.5 text-[10px] font-semibold ${refreshError ? "bg-rose-50 text-rose-700" : "text-[var(--text-dim)]"}`}>
+                <RefreshCw className={`size-3.5 ${isRefreshing ? "animate-spin text-[var(--accent)]" : refreshError ? "text-rose-600" : "text-emerald-600"}`} />
+                {pendingRange
+                  ? `Updating to ${pendingRange} · showing ${displayedRange}`
+                  : refreshError || `${formatNumber(snapshot.totals.operations)} ops · ${formatNumber(snapshot.totals.failed)} failed · p95 ${formatDuration(snapshot.totals.p95DurationMs)}`}
+              </div>
+              <span className="mx-1 h-6 w-px shrink-0 bg-[var(--border)]" />
+              <button type="button" onClick={() => activateOperationFilter("failed")} className="shrink-0 rounded-lg px-2.5 py-1.5 text-[10px] font-semibold text-rose-700 transition hover:bg-rose-50">Failures <span className="ml-1 font-mono">{formatNumber(snapshot.totals.failed)}</span></button>
+              <button type="button" onClick={() => scrollToSection(qualitySectionRef)} className="shrink-0 rounded-lg px-2.5 py-1.5 text-[10px] font-semibold text-[var(--text-dim)] transition hover:bg-[var(--surface-mute)] hover:text-[var(--accent)]">Coverage <span className="ml-1 font-mono">{formatPercent(attemptCoverage)}</span></button>
+              <button type="button" onClick={() => scrollToSection(routeSectionRef)} className="shrink-0 rounded-lg px-2.5 py-1.5 text-[10px] font-semibold text-[var(--text-dim)] transition hover:bg-[var(--surface-mute)] hover:text-[var(--accent)]">Routes <span className="ml-1 font-mono">{formatNumber(snapshot.providers.length)}</span></button>
+              {sloEvaluations.length > 0 ? <button type="button" onClick={() => scrollToSection(sloSectionRef)} className="shrink-0 rounded-lg px-2.5 py-1.5 text-[10px] font-semibold text-[var(--text-dim)] transition hover:bg-[var(--surface-mute)] hover:text-[var(--accent)]">SLOs <span className="ml-1 font-mono">{formatNumber(sloEvaluations.filter((evaluation) => evaluation.status === "breached").length)}</span></button> : null}
+              <button type="button" onClick={() => activateOperationFilter("all")} className="shrink-0 rounded-lg px-2.5 py-1.5 text-[10px] font-semibold text-[var(--text-dim)] transition hover:bg-[var(--surface-mute)] hover:text-[var(--accent)]">Operations</button>
+              <button type="button" onClick={() => void load(range, "refresh")} disabled={isRefreshing} className="ml-auto grid size-8 shrink-0 place-items-center rounded-lg border border-[var(--border)] bg-white text-[var(--text-dim)] transition hover:border-[var(--accent)] hover:text-[var(--accent)] disabled:opacity-50" aria-label="Refresh analysis"><RefreshCw className={`size-3.5 ${isRefreshing ? "animate-spin" : ""}`} /></button>
+            </div>
           </div>
         </section>
 
@@ -675,7 +814,7 @@ export function LiveCockpit() {
         </section>
 
         <section className="mt-6 grid gap-4 xl:grid-cols-[1.35fr_0.9fr]">
-          <Panel title="Throughput" subtitle={`${range} operation volume vs failures`}>
+          <Panel title="Throughput" subtitle={`${displayedRange} operation volume vs failures`}>
             {hasTimelineVolume ? (
               <ThroughputChart data={timelineData} />
             ) : (
@@ -728,7 +867,7 @@ export function LiveCockpit() {
         </section>
 
         {sloEvaluations.length > 0 ? (
-          <section className="mt-6 rounded-xl border border-[var(--border)] bg-white p-5 shadow-[var(--shadow-1)] sm:p-6">
+          <section ref={sloSectionRef} tabIndex={-1} className="mt-6 scroll-mt-24 rounded-xl border border-[var(--border)] bg-white p-5 shadow-[var(--shadow-1)] outline-none sm:p-6">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h2 className="flex items-center gap-2 text-sm font-semibold text-[var(--text-strong)]"><Gauge className="size-4 text-[var(--accent)]" /> Reliability objectives</h2>
@@ -775,7 +914,7 @@ export function LiveCockpit() {
           </section>
         ) : null}
 
-        <section className="mt-6 grid items-start gap-5 xl:grid-cols-[1.25fr_0.75fr]">
+        <section ref={qualitySectionRef} tabIndex={-1} className="mt-6 grid scroll-mt-24 items-start gap-5 outline-none xl:grid-cols-[1.25fr_0.75fr]">
           <Panel
             title="Instrumentation quality"
             subtitle="Measured canonical evidence coverage; missing facts are never inferred"
@@ -834,7 +973,7 @@ export function LiveCockpit() {
           </Panel>
         </section>
 
-        <section className="mt-6 grid items-start gap-5 lg:grid-cols-2">
+        <section ref={routeSectionRef} tabIndex={-1} className="mt-6 grid scroll-mt-24 items-start gap-5 outline-none lg:grid-cols-2">
           <Panel
             title="Provider route health"
             subtitle={`${formatNumber(snapshot.totals.operationsWithAttemptTelemetry)} of ${formatNumber(snapshot.totals.operations)} operations include explicit attempt telemetry`}
@@ -921,7 +1060,7 @@ export function LiveCockpit() {
             )}
           </Panel>
 
-          <div ref={operationSectionRef} tabIndex={-1} className="min-w-0 scroll-mt-6 outline-none lg:col-span-2">
+          <div ref={operationSectionRef} tabIndex={-1} className="min-w-0 scroll-mt-24 outline-none lg:col-span-2">
             <Panel
               title="Operations explorer"
               subtitle={`${formatNumber(operationPagination.total)} available of ${formatNumber(operationFilterTotal)} ${operationFilter === "all" ? "operations" : `${operationFilter} outcomes`} in this range · identifiers only`}
