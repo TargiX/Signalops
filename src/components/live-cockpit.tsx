@@ -737,7 +737,7 @@ export function LiveCockpit() {
               </select>
             ) : null}
             <a href="/cockpit?mode=demo" className="rounded-lg border border-[var(--border)] bg-white px-3 py-2 text-xs font-semibold text-[var(--text-dim)] hover:text-[var(--accent)]">Demo</a>
-            <button onClick={() => void load(range, "refresh")} className="grid size-9 place-items-center rounded-lg border border-[var(--border)] bg-white text-[var(--text-dim)] hover:text-[var(--accent)]" aria-label="Refresh"><RefreshCw className={`size-4 ${isRefreshing ? "animate-spin" : ""}`} /></button>
+            <button onClick={() => void load(range, "refresh")} disabled={isRefreshing} className="grid size-9 place-items-center rounded-lg border border-[var(--border)] bg-white text-[var(--text-dim)] hover:text-[var(--accent)] disabled:cursor-wait disabled:opacity-50" aria-label="Refresh"><RefreshCw className={`size-4 ${isRefreshing ? "animate-spin" : ""}`} /></button>
             <button onClick={() => void logout()} className="grid size-9 place-items-center rounded-lg border border-[var(--border)] bg-white text-[var(--text-dim)] hover:text-rose-600" aria-label="Sign out"><LogOut className="size-4" /></button>
           </div>
         </header>
