@@ -105,6 +105,26 @@ assert.match(
 );
 assert.match(liveSource, /ariaLabel="Model performance pagination"/);
 assert.match(liveSource, /ariaLabel="Operations pagination"/);
+assert.doesNotMatch(
+  liveSource,
+  /setState\("loading"\);\s*setSelectedOperationId\(null\);\s*setOperationPage\(1\);\s*setModelPage\(1\);\s*setProviderPage\(1\);\s*setRange\(value\)/,
+  "Changing the analysis range must not replace the mounted cockpit with a full-screen loader.",
+);
+assert.match(
+  liveSource,
+  /aria-label="Analysis controls"[\s\S]*?sticky/,
+  "The live cockpit must keep a compact analysis control surface available while scrolling.",
+);
+assert.match(
+  liveSource,
+  /new AbortController\(\)/,
+  "Range and refresh requests must cancel obsolete work instead of racing stale snapshots into view.",
+);
+assert.match(
+  liveSource,
+  /aria-live="polite"/,
+  "Background refresh progress and failures must be announced without replacing the dashboard.",
+);
 assert.match(liveSource, /Reliability objectives/);
 assert.match(liveSource, /\/v1\/incidents\?state=active/);
 assert.match(liveSource, /\/v1\/slos/);
@@ -119,7 +139,7 @@ assert.match(sloSource, /minimumSample: 20/);
 assert.match(sloSource, /status: "insufficient_data"/);
 assert.match(
   liveSource,
-  /ref=\{operationSectionRef\}[\s\S]*?className="min-w-0 scroll-mt-6/,
+  /ref=\{operationSectionRef\}[\s\S]*?className="min-w-0 scroll-mt-24/,
   "The horizontally scrollable operations table must not widen the page grid on mobile.",
 );
 assert.match(cockpitViewSource, /export function filterSignalOpsOperationsV1/);
@@ -128,6 +148,8 @@ assert.match(cockpitViewSource, /export function paginateSignalOpsRowsV1/);
 const {
   filterSignalOpsOperationsV1,
   paginateSignalOpsRowsV1,
+  applySignalOpsCockpitRangeV1,
+  readSignalOpsCockpitRangeV1,
 } = await import("../src/lib/signalops/v1/cockpit-view.ts");
 const operationRows = [
   { operationId: "ok", status: "succeeded" },
@@ -149,6 +171,20 @@ assert.deepEqual(
 assert.deepEqual(
   paginateSignalOpsRowsV1(["a", "b", "c"], 99, 2),
   { rows: ["c"], page: 2, pageCount: 2, total: 3 },
+);
+assert.equal(readSignalOpsCockpitRangeV1("?range=7d"), "7d");
+assert.equal(
+  readSignalOpsCockpitRangeV1("?range=tomorrow"),
+  "90d",
+  "Invalid shared range links must fall back to the live cockpit default.",
+);
+assert.equal(
+  applySignalOpsCockpitRangeV1(
+    new URL("https://signalops.cc/cockpit?auth=callback-failed#routes"),
+    "24h",
+  ).toString(),
+  "https://signalops.cc/cockpit?auth=callback-failed&range=24h#routes",
+  "Range links must remain shareable without discarding other cockpit context.",
 );
 
 console.log("signalops live cockpit v1 checks passed");
