@@ -1036,7 +1036,7 @@ export function LiveCockpit() {
     );
     showFeedback(
       result.dispatched
-        ? `${formatNumber(filteredOperations.length)} retained operations exported`
+        ? `${formatNumber(filteredOperations.length)} retained operation${filteredOperations.length === 1 ? "" : "s"} exported`
         : "CSV export unavailable",
       result.dispatched ? "success" : "error",
     );
