@@ -49,6 +49,15 @@ The dev server is pinned to [http://localhost:3020](http://localhost:3020) to av
 - The local memory sink retains at most 1,000 events and can evict the oldest retained event. Receipts expose stored, duplicate, evicted, and retained counts so this behavior is not presented as durability.
 - Production intentionally returns `503 storage_not_ready` after authentication because this slice does not configure a durable store. The endpoint is not production-ready until a separate durable sink is implemented and explicitly wired.
 
+## Canonical telemetry v1
+
+The production-oriented, vendor-neutral v1 contract is now executable but not yet exposed as a
+production endpoint. Its JSON Schema, shared fixtures, portable validator, and implementation SPEC
+live under [`schemas/ai-telemetry/v1`](schemas/ai-telemetry/v1) and
+[`docs/specs`](docs/specs). Run `pnpm contract:validate` and `pnpm test:contract:v1` to verify the
+artifact, privacy checks, idempotent duplicates, and changed-payload conflicts. Existing
+`/api/events*` routes remain the v0 demonstration until durable multi-tenant ingest is implemented.
+
 ## Demo script
 
 For a fast portfolio review, the dashboard opens with a **Guided incident replay** rail directly under the header. It turns the surface into a self-explaining demo — a first-run reviewer can follow one incident end to end in well under 90 seconds.

@@ -1,0 +1,27 @@
+{
+  "specversion": "1.0",
+  "id": "evt_operation_job_100_accepted",
+  "source": "urn:reference-client:production:generation-worker",
+  "type": "com.signalops.ai.operation.accepted.v1",
+  "subject": "operation/job_100",
+  "time": "2026-08-23T04:30:00.000Z",
+  "datacontenttype": "application/json",
+  "dataschema": "https://signalops.cc/schemas/ai-telemetry/v1",
+  "data": {
+    "operation": {
+      "id": "job_100",
+      "kind": "image_generation",
+      "logicalModelKey": "image.fast"
+    },
+    "resource": {
+      "environment": "production",
+      "service": "generation-worker",
+      "release": "release_2026_08_23",
+      "region": "eu-central"
+    },
+    "attributes": {
+      "mediaType": "image",
+      "source": "canvas"
+    }
+  }
+}

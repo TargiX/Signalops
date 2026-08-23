@@ -1,0 +1,18 @@
+{
+  "specversion": "1.0",
+  "id": "evt_invalid_cost",
+  "source": "urn:reference-client:test:worker",
+  "type": "com.signalops.ai.attempt.terminal.v1",
+  "subject": "operation/job_invalid_cost",
+  "time": "2026-08-23T04:30:00.000Z",
+  "datacontenttype": "application/json",
+  "dataschema": "https://signalops.cc/schemas/ai-telemetry/v1",
+  "data": {
+    "operation": { "id": "job_invalid_cost", "kind": "image_generation" },
+    "attempt": { "id": "attempt_invalid_cost", "number": 1 },
+    "route": { "providerKey": "primary-fal", "modelKey": "flux-2-pro" },
+    "outcome": { "status": "succeeded" },
+    "cost": { "amount": 0.053, "currency": "USD" },
+    "resource": { "environment": "test", "service": "worker" }
+  }
+}
