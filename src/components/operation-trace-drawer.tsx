@@ -4,14 +4,16 @@ import { Dialog } from "@base-ui/react/dialog";
 import {
   Activity,
   ArrowRight,
+  Check,
   CheckCircle2,
+  Link2,
   RefreshCw,
   Route,
   TriangleAlert,
   X,
 } from "lucide-react";
 import type { RefObject } from "react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import type {
   SignalOpsOperationTraceAttemptV1,
@@ -264,6 +266,8 @@ export function OperationTraceDrawer({
 }) {
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [trace, setTrace] = useState<SignalOpsOperationTraceV1 | null>(null);
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const copyResetTimer = useRef<number | null>(null);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setState("loading");
@@ -292,6 +296,39 @@ export function OperationTraceDrawer({
     };
   }, [load]);
 
+  useEffect(() => {
+    return () => {
+      if (copyResetTimer.current) {
+        window.clearTimeout(copyResetTimer.current);
+      }
+    };
+  }, [operationId]);
+
+  async function copyTraceLink() {
+    let timeoutId: number | null = null;
+    try {
+      if (!navigator.clipboard) throw new Error("clipboard unavailable");
+      await Promise.race([
+        navigator.clipboard.writeText(window.location.href),
+        new Promise<never>((_, reject) => {
+          timeoutId = window.setTimeout(
+            () => reject(new Error("clipboard timed out")),
+            1_200,
+          );
+        }),
+      ]);
+      setCopyState("copied");
+    } catch {
+      setCopyState("failed");
+    } finally {
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
+    }
+    if (copyResetTimer.current) {
+      window.clearTimeout(copyResetTimer.current);
+    }
+    copyResetTimer.current = window.setTimeout(() => setCopyState("idle"), 2200);
+  }
+
   return (
     <Dialog.Root open onOpenChange={(open) => { if (!open) onClose(); }}>
       <Dialog.Portal>
@@ -313,6 +350,16 @@ export function OperationTraceDrawer({
                   </Dialog.Description>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void copyTraceLink()}
+                    aria-label={copyState === "failed" ? "Trace link could not be copied" : copyState === "copied" ? "Trace link copied" : "Copy operation trace link"}
+                    title="Copy operation trace link"
+                    className={`inline-flex h-9 items-center gap-1.5 rounded-lg border bg-white px-2.5 text-[10px] font-semibold ${copyState === "failed" ? "border-rose-200 text-rose-700" : copyState === "copied" ? "border-emerald-200 text-emerald-700" : "border-[var(--border)] text-[var(--text-dim)] hover:text-[var(--accent)]"}`}
+                  >
+                    {copyState === "copied" ? <Check className="size-3.5" /> : <Link2 className="size-3.5" />}
+                    <span className="hidden sm:inline">{copyState === "failed" ? "Copy failed" : copyState === "copied" ? "Copied" : "Copy link"}</span>
+                  </button>
                   <button
                     type="button"
                     onClick={() => void load()}

@@ -18,7 +18,7 @@ import {
 } from "recharts";
 import { useEffect, useRef, useState } from "react";
 import { formatCurrency, formatMs, cn } from "@/lib/utils";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 
 export type ChartTimeBucket = {
   time: string;
@@ -201,6 +201,7 @@ export function SpendDonutChart({
 }) {
   const [containerRef, width] = useChartWidth();
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  const reduceMotion = useReducedMotion();
 
   const totalSpend = data.reduce((sum, item) => sum + item.spend, 0);
   const activeItem = activeIndex !== null ? data[activeIndex] : null;
@@ -219,7 +220,7 @@ export function SpendDonutChart({
               dataKey="spend"
               stroke="var(--surface)"
               strokeWidth={3}
-              isAnimationActive={true}
+              isAnimationActive={!reduceMotion}
               animationBegin={0}
               animationDuration={800}
               animationEasing="ease-out"
@@ -249,10 +250,10 @@ export function SpendDonutChart({
               {activeItem ? (
                 <motion.div
                   key={activeItem.id}
-                  initial={{ opacity: 0, y: 4, scale: 0.95 }}
+                  initial={reduceMotion ? false : { opacity: 0, y: 4, scale: 0.95 }}
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   exit={{ opacity: 0, y: -4, scale: 0.95 }}
-                  transition={{ duration: 0.15 }}
+                  transition={{ duration: reduceMotion ? 0 : 0.15 }}
                   className="flex flex-col items-center"
                 >
                   <span className="mb-0.5 text-[13px] font-medium text-[var(--text-dim)]">
@@ -271,7 +272,7 @@ export function SpendDonutChart({
               ) : (
                 <motion.div
                   key="total"
-                  initial={{ opacity: 0 }}
+                  initial={reduceMotion ? false : { opacity: 0 }}
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
                   className="flex flex-col items-center"
@@ -337,6 +338,7 @@ export function PerformanceScatterChart({ data }: { data: ChartProvider[] }) {
   const [containerRef, width] = useChartWidth();
   const [isFirstHover, setIsFirstHover] = useState(true);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const reduceMotion = useReducedMotion();
 
   const handlePointEnter = () => {
     // When hovering a point, wait 50ms before enabling transitions
@@ -393,7 +395,7 @@ export function PerformanceScatterChart({ data }: { data: ChartProvider[] }) {
           <Tooltip 
             cursor={{ strokeDasharray: '3 3' }} 
             contentStyle={tooltipStyle}
-            isAnimationActive={true}
+            isAnimationActive={!reduceMotion}
             formatter={(value, name) => [
               name === "Latency" ? formatMs(Number(value)) : name === "Failure Rate" ? `${value}%` : value, 
               name
@@ -406,6 +408,7 @@ export function PerformanceScatterChart({ data }: { data: ChartProvider[] }) {
               data={[entry]} 
               fill={entry.color} 
               opacity={0.8}
+              isAnimationActive={!reduceMotion}
               onMouseEnter={handlePointEnter}
             />
           ))}
