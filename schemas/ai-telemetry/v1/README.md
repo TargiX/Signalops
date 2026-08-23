@@ -32,11 +32,10 @@ node scripts/validate-signalops-contract.mjs \
   --invalid-dir=/absolute/path/to/fixtures/invalid
 ```
 
-A client repository should pin both schemas, the semantic validator, and fixtures to an immutable
-SignalOps commit. It must not track
-the moving `main` branch in CI. Publishing a package or release archive is deferred until the v1
-contract is approved; until then, use the full commit SHA in the raw GitHub URL or vendor the files
-with their source SHA recorded.
+A client repository should pin `@signalops/contracts` and `@signalops/producer-node` to exact
+versions. The contracts package includes both schemas, the semantic validator, and fixtures. Until
+the first registry release, clients may vendor those artifacts from an immutable SignalOps commit;
+they must not track the moving `main` branch in CI.
 
 ## Compatibility
 

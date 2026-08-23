@@ -54,6 +54,7 @@ workspace password, session secret, and ingest token before testing live mode.
 - `POST /v1/events` accepts canonical AI telemetry using a tenant Bearer credential.
 - `POST /v1/events/validate` validates the same contract without storing it.
 - `GET /v1/ops/snapshot?range=24h|7d|30d|90d` requires a signed operator session.
+- `GET /v1/ops/operations/:operationId` returns a tenant-scoped, privacy-safe operation trace.
 - `GET /v1/incidents` lists tenant incidents; ingest and the authenticated internal evaluator
   maintain their open/resolved lifecycle.
 - `/schemas/ai-telemetry/v1` publishes the exact JSON Schema named by canonical events.
@@ -102,6 +103,13 @@ implementation SPEC live under [`schemas/ai-telemetry/v1`](schemas/ai-telemetry/
 artifact, privacy checks, tenant isolation, idempotent duplicates, changed-payload conflicts,
 projection semantics, and signed-session boundaries. Existing `/api/events*` routes remain the v0
 demonstration for compatibility.
+
+The workspace also contains two client-facing packages:
+
+- [`@signalops/contracts`](packages/contracts) — TypeScript types plus the normative schemas,
+  semantic validator, and fixtures.
+- [`@signalops/producer-node`](packages/producer-node) — lifecycle recorder, bounded HTTP transport,
+  memory transport, privacy normalization, dead-letter seam, and executable conformance runner.
 
 ## Demo script
 

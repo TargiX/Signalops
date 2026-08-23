@@ -50,6 +50,11 @@ Versioned policies evaluate provider-route health, operation success and latency
 
 ## Delivery increments
 
+Implementation status on 2026-08-23: Increment 1 is live in production. Increment 2 has a
+framework-neutral contracts package, Node producer, memory and HTTP transports, executable
+conformance runner, and Phosphene rollout handoff; the production coverage gate remains open until
+the Phosphene cutover is deployed and observed.
+
 ### Increment 1 — trustworthy investigation
 
 - Add an indexed subject read path to every event-store adapter and the production database.
