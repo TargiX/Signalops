@@ -1,0 +1,15 @@
+{
+  "specversion": "1.0",
+  "id": "evt_invalid_unknown_field",
+  "source": "urn:reference-client:test:worker",
+  "type": "com.signalops.ai.operation.accepted.v1",
+  "subject": "operation/job_unknown_field",
+  "time": "2026-08-23T04:30:00.000Z",
+  "datacontenttype": "application/json",
+  "dataschema": "https://signalops.cc/schemas/ai-telemetry/v1",
+  "tenantId": "attacker-selected-tenant",
+  "data": {
+    "operation": { "id": "job_unknown_field", "kind": "image_generation" },
+    "resource": { "environment": "test", "service": "worker" }
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "specversion": "1.0",
+  "id": "evt_invalid_disguised_prompt",
+  "source": "urn:example:ai-worker",
+  "type": "com.signalops.ai.operation.accepted.v1",
+  "subject": "operation/op_invalid_disguised_prompt",
+  "time": "2026-08-23T04:30:10.123Z",
+  "datacontenttype": "application/json",
+  "dataschema": "https://signalops.cc/schemas/ai-telemetry/v1",
+  "data": {
+    "operation": {
+      "id": "op_invalid_disguised_prompt",
+      "kind": "image_generation"
+    },
+    "resource": {
+      "environment": "production",
+      "service": "generation-worker"
+    },
+    "attributes": {
+      "Prompt_Text": "private prompt content"
+    }
+  }
+}

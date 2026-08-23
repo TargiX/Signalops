@@ -1,0 +1,52 @@
+{
+  "specversion": "1.0",
+  "id": "evt_job_123_attempt_2_terminal",
+  "source": "urn:example:production:ai-worker",
+  "type": "com.signalops.ai.attempt.terminal.v1",
+  "subject": "operation/job_123",
+  "time": "2026-08-23T04:30:12.345Z",
+  "datacontenttype": "application/json",
+  "dataschema": "https://signalops.cc/schemas/ai-telemetry/v1",
+  "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+  "data": {
+    "operation": {
+      "id": "job_123",
+      "kind": "image_generation",
+      "logicalModelKey": "image.fast"
+    },
+    "attempt": {
+      "id": "attempt_456",
+      "number": 2
+    },
+    "route": {
+      "providerKey": "primary-fal",
+      "providerVendor": "fal",
+      "modelKey": "flux-2-pro",
+      "providerModelKey": "fal-ai/flux-2-pro",
+      "region": "iad"
+    },
+    "outcome": {
+      "status": "succeeded"
+    },
+    "metrics": {
+      "durationMs": 18340,
+      "outputUnits": 1
+    },
+    "cost": {
+      "amount": "0.053",
+      "currency": "USD",
+      "source": "catalog_estimate"
+    },
+    "resource": {
+      "environment": "production",
+      "service": "generation-worker",
+      "release": "de4918457d6009cfe90a10222439881af8be8e14",
+      "region": "hetzner"
+    },
+    "attributes": {
+      "mediaType": "image",
+      "source": "canvas",
+      "usageMode": "clean"
+    }
+  }
+}

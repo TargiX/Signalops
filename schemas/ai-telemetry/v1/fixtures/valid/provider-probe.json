@@ -1,0 +1,37 @@
+{
+  "specversion": "1.0",
+  "id": "evt_probe_primary_fal_20260823T043200",
+  "source": "urn:reference-client:production:provider-monitor",
+  "type": "com.signalops.ai.provider.probe.v1",
+  "subject": "provider/primary-fal",
+  "time": "2026-08-23T04:32:00.000Z",
+  "datacontenttype": "application/json",
+  "dataschema": "https://signalops.cc/schemas/ai-telemetry/v1",
+  "data": {
+    "route": {
+      "providerKey": "primary-fal",
+      "providerVendor": "fal",
+      "region": "iad"
+    },
+    "outcome": {
+      "status": "failed",
+      "failure": {
+        "category": "provider_capacity",
+        "responsibility": "provider",
+        "code": "synthetic_capacity_probe",
+        "retryable": true
+      }
+    },
+    "metrics": {
+      "durationMs": 10000
+    },
+    "resource": {
+      "environment": "production",
+      "service": "provider-monitor",
+      "region": "eu-central"
+    },
+    "attributes": {
+      "synthetic": true
+    }
+  }
+}

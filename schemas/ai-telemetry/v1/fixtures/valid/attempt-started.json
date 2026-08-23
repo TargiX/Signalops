@@ -1,0 +1,34 @@
+{
+  "specversion": "1.0",
+  "id": "evt_attempt_attempt_200_started",
+  "source": "urn:reference-client:production:generation-worker",
+  "type": "com.signalops.ai.attempt.started.v1",
+  "subject": "operation/job_100",
+  "time": "2026-08-23T04:30:01.000Z",
+  "datacontenttype": "application/json",
+  "dataschema": "https://signalops.cc/schemas/ai-telemetry/v1",
+  "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+  "data": {
+    "operation": {
+      "id": "job_100",
+      "kind": "image_generation",
+      "logicalModelKey": "image.fast"
+    },
+    "attempt": {
+      "id": "attempt_200",
+      "number": 1
+    },
+    "route": {
+      "providerKey": "primary-fal",
+      "providerVendor": "fal",
+      "modelKey": "flux-2-pro",
+      "providerModelKey": "fal-ai/flux-2-pro",
+      "region": "iad"
+    },
+    "resource": {
+      "environment": "production",
+      "service": "generation-worker",
+      "release": "release_2026_08_23"
+    }
+  }
+}
