@@ -52,9 +52,11 @@ The dev server is pinned to [http://localhost:3020](http://localhost:3020) to av
 ## Canonical telemetry v1
 
 The production-oriented, vendor-neutral v1 contract is now executable but not yet exposed as a
-production endpoint. Its JSON Schema, shared fixtures, portable validator, and implementation SPEC
-live under [`schemas/ai-telemetry/v1`](schemas/ai-telemetry/v1) and
-[`docs/specs`](docs/specs). Run `pnpm contract:validate` and `pnpm test:contract:v1` to verify the
+production endpoint. Its JSON Schema, shared fixtures, portable semantic validator, and
+implementation SPEC live under [`schemas/ai-telemetry/v1`](schemas/ai-telemetry/v1) and
+[`docs/specs`](docs/specs); the standalone runner is
+[`scripts/validate-signalops-contract.mjs`](scripts/validate-signalops-contract.mjs). Run
+`pnpm contract:validate` and `pnpm test:contract:v1` to verify the
 artifact, privacy checks, idempotent duplicates, and changed-payload conflicts. Existing
 `/api/events*` routes remain the v0 demonstration until durable multi-tenant ingest is implemented.
 

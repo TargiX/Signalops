@@ -70,6 +70,11 @@ ingest(principal: TenantPrincipal, batch: unknown): Promise<IngestReceipt>
 validate(principal: TenantPrincipal, batch: unknown): Promise<ValidationReceipt>
 ```
 
+`TenantPrincipal` is created only by the authentication adapter and carries an opaque tenant ID,
+credential ID, and granted scopes. Ingestion and event-store adapters accept that principal and
+derive storage scope from `principal.tenantId`; neither an event nor a batch envelope may choose or
+override its tenant.
+
 The module owns parsing, size limits, canonical validation, privacy enforcement, normalization,
 idempotency comparison, and receipt construction. HTTP route handlers only translate transport
 details into this interface.

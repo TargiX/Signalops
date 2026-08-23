@@ -22,7 +22,9 @@
       "type": "string",
       "format": "uri",
       "minLength": 1,
-      "maxLength": 240
+      "maxLength": 240,
+      "pattern": "^[^?@#\\s]+$",
+      "description": "Stable producer URI without userinfo, query parameters, or fragments."
     },
     "type": {
       "enum": [
@@ -36,14 +38,15 @@
     "subject": {
       "type": "string",
       "maxLength": 180,
-      "pattern": "^(operation|provider)/[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+      "pattern": "^(operation|provider)/[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+      "description": "Must exactly identify data.operation.id or, for probes, data.route.providerKey; the portable semantic validator enforces the cross-field equality."
     },
     "time": { "$ref": "#/$defs/timestamp" },
     "datacontenttype": { "const": "application/json" },
     "dataschema": { "const": "https://signalops.cc/schemas/ai-telemetry/v1" },
     "traceparent": {
       "type": "string",
-      "pattern": "^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}(?:-[\u0021-\u007e]+)?$",
+      "pattern": "^(?!ff-)(?![0-9a-f]{2}-0{32}-)(?![0-9a-f]{2}-[0-9a-f]{32}-0{16}-)[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}(?:-[\u0021-\u007e]+)?$",
       "maxLength": 512
     },
     "data": { "type": "object" }
@@ -302,7 +305,7 @@
       "maxLength": 64,
       "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$",
       "not": {
-        "pattern": "^(?:[Pp][Rr][Oo][Mm][Pp][Tt](?:[_.-]?(?:[Tt][Ee][Xx][Tt]|[Ll][Ee][Nn][Gg][Tt][Hh]))?|[Uu][Ss][Ee][Rr](?:[_.-]?[Ii][Dd])?|[Ee][Mm][Aa][Ii][Ll]|[Ii][Pp]|(?:[Ii][Mm][Aa][Gg][Ee]|[Mm][Ee][Dd][Ii][Aa]|[Rr][Ee][Ff][Ee][Rr][Ee][Nn][Cc][Ee][Ii][Mm][Aa][Gg][Ee])[_.-]?[Uu][Rr][Ll][Ss]?|[Aa][Pp][Ii][_.-]?[Kk][Ee][Yy]|[Tt][Oo][Kk][Ee][Nn]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll][Ss]|[Ee][Rr][Rr][Oo][Rr](?:[_.-]?[Mm][Ee][Ss][Ss][Aa][Gg][Ee])?|[Rr][Aa][Ww][_.-]?[Ee][Rr][Rr][Oo][Rr]|[Ss][Tt][Aa][Cc][Kk]|[Ee][Xx][Tt][Ee][Rr][Nn][Aa][Ll][_.-]?[Rr][Ee][Qq][Uu][Ee][Ss][Tt][_.-]?[Ii][Dd])$"
+        "pattern": "^(?:[Pp][Rr][Oo][Mm][Pp][Tt](?:[_.-]?(?:[Tt][Ee][Xx][Tt]|[Ll][Ee][Nn][Gg][Tt][Hh]))?|[Uu][Ss][Ee][Rr](?:[_.-]?[Ii][Dd])?|[Ee][Mm][Aa][Ii][Ll]|[Ii][Pp]|(?:[Ii][Mm][Aa][Gg][Ee]|[Mm][Ee][Dd][Ii][Aa]|[Rr][Ee][Ff][Ee][Rr][Ee][Nn][Cc][Ee][Ii][Mm][Aa][Gg][Ee])[_.-]?[Uu][Rr][Ll][Ss]?|[Aa][Cc][Cc][Ee][Ss][Ss][_.-]?[Tt][Oo][Kk][Ee][Nn]|[Aa][Pp][Ii][_.-]?[Kk][Ee][Yy]|[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr][_.-]?[Aa][Pp][Ii][_.-]?[Kk][Ee][Yy]|[Tt][Oo][Kk][Ee][Nn]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll][Ss]|[Ee][Rr][Rr][Oo][Rr](?:[_.-]?[Mm][Ee][Ss][Ss][Aa][Gg][Ee])?|[Rr][Aa][Ww][_.-]?[Ee][Rr][Rr][Oo][Rr]|[Ss][Tt][Aa][Cc][Kk]|[Ee][Xx][Tt][Ee][Rr][Nn][Aa][Ll][_.-]?[Rr][Ee][Qq][Uu][Ee][Ss][Tt][_.-]?[Ii][Dd])$"
       }
     },
     "safeAttributeString": {

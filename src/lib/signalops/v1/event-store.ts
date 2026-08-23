@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 
 import { canonicalSignalOpsEventTextV1 } from "./contract.ts";
-import type { SignalOpsEventV1 } from "./types.ts";
+import { assertSignalOpsTenantPrincipalV1 } from "./principal.ts";
+import type { SignalOpsEventV1, SignalOpsTenantPrincipalV1 } from "./types.ts";
 
 export type StoredSignalOpsEventV1 = {
   tenantId: string;
@@ -18,7 +19,7 @@ export type SignalOpsEventStoreWriteResultV1 = {
 
 export interface SignalOpsEventStoreV1 {
   store(
-    tenantId: string,
+    principal: SignalOpsTenantPrincipalV1,
     events: readonly SignalOpsEventV1[],
   ): Promise<SignalOpsEventStoreWriteResultV1>;
 }
@@ -32,12 +33,6 @@ function eventDigest(event: SignalOpsEventV1): string {
   return createHash("sha256").update(canonicalSignalOpsEventTextV1(event), "utf8").digest("hex");
 }
 
-function assertTenantId(tenantId: string) {
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/.test(tenantId)) {
-    throw new Error("tenantId must be a bounded opaque identifier");
-  }
-}
-
 export function createMemorySignalOpsEventStoreV1(
   options: { receivedAtFactory?: () => string } = {},
 ): MemorySignalOpsEventStoreV1 {
@@ -45,8 +40,9 @@ export function createMemorySignalOpsEventStoreV1(
   const records = new Map<string, StoredSignalOpsEventV1>();
 
   return {
-    async store(tenantId, events) {
-      assertTenantId(tenantId);
+    async store(principal, events) {
+      assertSignalOpsTenantPrincipalV1(principal, "events:write");
+      const { tenantId } = principal;
 
       const storedEventIds: string[] = [];
       const duplicateEventIds: string[] = [];

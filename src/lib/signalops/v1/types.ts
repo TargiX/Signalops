@@ -11,6 +11,16 @@ export const SIGNALOPS_V1_EVENT_TYPES = [
 
 export type SignalOpsEventTypeV1 = (typeof SIGNALOPS_V1_EVENT_TYPES)[number];
 
+export const SIGNALOPS_V1_PRINCIPAL_SCOPES = ["events:validate", "events:write"] as const;
+
+export type SignalOpsPrincipalScopeV1 = (typeof SIGNALOPS_V1_PRINCIPAL_SCOPES)[number];
+
+export type SignalOpsTenantPrincipalV1 = Readonly<{
+  tenantId: string;
+  credentialId: string;
+  scopes: readonly SignalOpsPrincipalScopeV1[];
+}>;
+
 export type SignalOpsOperationKindV1 =
   | "image_generation"
   | "video_generation"

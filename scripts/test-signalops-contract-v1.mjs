@@ -44,6 +44,14 @@ const validFixtures = fixtureFiles("valid").map(readJson);
 const invalidFixtures = fixtureFiles("invalid").map(readJson);
 const observedTypes = new Set();
 
+function writePrincipal(tenantId) {
+  return {
+    tenantId,
+    credentialId: `credential-${tenantId}`,
+    scopes: ["events:write"],
+  };
+}
+
 for (const fixture of validFixtures) {
   const result = validateSignalOpsEventV1(fixture);
   assert.equal(result.ok, true, JSON.stringify(result));
@@ -56,6 +64,14 @@ for (const fixture of invalidFixtures) {
   const result = validateSignalOpsEventV1(fixture);
   assert.equal(result.ok, false, `expected fixture ${fixture.id} to be rejected`);
 }
+
+const identityMismatch = invalidFixtures.find(
+  (fixture) => fixture.id === "evt_invalid_subject_identity",
+);
+assert.ok(identityMismatch);
+const identityMismatchResult = validateSignalOpsEventV1(identityMismatch);
+assert.equal(identityMismatchResult.ok, false);
+assert.ok(identityMismatchResult.issues.some((issue) => issue.keyword === "identity"));
 
 const canonicalFixture = validFixtures.find(
   (fixture) => fixture.type === "com.signalops.ai.attempt.terminal.v1",
@@ -81,6 +97,15 @@ disguisedPromptKey.data.attributes = { Prompt_Text: "private content" };
 const disguisedPromptResult = validateSignalOpsEventV1(disguisedPromptKey);
 assert.equal(disguisedPromptResult.ok, false);
 assert.ok(disguisedPromptResult.issues.some((issue) => issue.keyword === "privacy"));
+
+for (const forbiddenKey of ["accessToken", "provider_api_key"]) {
+  const credentialAttribute = structuredClone(validFixtures[0]);
+  credentialAttribute.id = `evt_${forbiddenKey}`;
+  credentialAttribute.data.attributes = { [forbiddenKey]: "private credential" };
+  const credentialResult = validateSignalOpsEventV1(credentialAttribute);
+  assert.equal(credentialResult.ok, false);
+  assert.ok(credentialResult.issues.some((issue) => issue.keyword === "privacy"));
+}
 
 const authorizationValue = structuredClone(validFixtures[0]);
 authorizationValue.id = "evt_authorization_value";
@@ -119,32 +144,35 @@ assert.throws(
 
 const receivedAt = "2026-08-23T05:00:00.000Z";
 const store = createMemorySignalOpsEventStoreV1({ receivedAtFactory: () => receivedAt });
-const firstWrite = await store.store("tenant-a", [canonicalResult.event]);
+const tenantAPrincipal = writePrincipal("tenant-a");
+const tenantBPrincipal = writePrincipal("tenant-b");
+const firstWrite = await store.store(tenantAPrincipal, [canonicalResult.event]);
 assert.deepEqual(firstWrite.storedEventIds, [canonicalResult.event.id]);
 assert.deepEqual(firstWrite.duplicateEventIds, []);
 assert.deepEqual(firstWrite.conflictEventIds, []);
 
-const duplicateWrite = await store.store("tenant-a", [reverseObjectKeys(canonicalResult.event)]);
+const duplicateWrite = await store.store(tenantAPrincipal, [reverseObjectKeys(canonicalResult.event)]);
 assert.deepEqual(duplicateWrite.storedEventIds, []);
 assert.deepEqual(duplicateWrite.duplicateEventIds, [canonicalResult.event.id]);
 assert.deepEqual(duplicateWrite.conflictEventIds, []);
 
 const conflictingEvent = structuredClone(canonicalResult.event);
 conflictingEvent.time = "2026-08-23T04:30:13.345Z";
-const conflictingWrite = await store.store("tenant-a", [conflictingEvent]);
+const conflictingWrite = await store.store(tenantAPrincipal, [conflictingEvent]);
 assert.deepEqual(conflictingWrite.storedEventIds, []);
 assert.deepEqual(conflictingWrite.duplicateEventIds, []);
 assert.deepEqual(conflictingWrite.conflictEventIds, [canonicalResult.event.id]);
 
-const otherTenantWrite = await store.store("tenant-b", [canonicalResult.event]);
+const otherTenantWrite = await store.store(tenantBPrincipal, [canonicalResult.event]);
 assert.deepEqual(otherTenantWrite.storedEventIds, [canonicalResult.event.id]);
 assert.equal(store.snapshot("tenant-a").length, 1);
 assert.equal(store.snapshot("tenant-b").length, 1);
 assert.equal(store.snapshot()[0].receivedAt, receivedAt);
 
 const ingestStore = createMemorySignalOpsEventStoreV1({ receivedAtFactory: () => receivedAt });
+const ingestPrincipal = writePrincipal("tenant-ingest");
 const initialReceipt = await ingestSignalOpsEventsV1({
-  tenantId: "tenant-ingest",
+  principal: ingestPrincipal,
   payload: [canonicalResult.event, invalidFixtures[0]],
   store: ingestStore,
 });
@@ -161,7 +189,7 @@ assert.deepEqual(initialReceipt, {
 });
 
 const retryReceipt = await ingestSignalOpsEventsV1({
-  tenantId: "tenant-ingest",
+  principal: ingestPrincipal,
   payload: [canonicalResult.event, conflictingEvent],
   store: ingestStore,
 });
@@ -174,8 +202,21 @@ assert.deepEqual(retryReceipt.duplicateEventIds, [canonicalResult.event.id]);
 assert.deepEqual(retryReceipt.conflictEventIds, [conflictingEvent.id]);
 
 await assert.rejects(
-  store.store("invalid tenant", [canonicalResult.event]),
-  /tenantId must be a bounded opaque identifier/,
+  store.store(writePrincipal("invalid tenant"), [canonicalResult.event]),
+  /principal tenantId must be a bounded opaque identifier/,
+);
+
+await assert.rejects(
+  ingestSignalOpsEventsV1({
+    principal: {
+      tenantId: "tenant-ingest",
+      credentialId: "credential-read-only",
+      scopes: ["events:validate"],
+    },
+    payload: canonicalResult.event,
+    store: ingestStore,
+  }),
+  /principal requires events:write scope/,
 );
 
 console.log(

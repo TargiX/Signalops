@@ -3,7 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import Ajv2020 from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
@@ -43,6 +43,12 @@ const schemaPath = path.resolve(
     path.join(repositoryRoot, "schemas/ai-telemetry/v1/event.schema.json"),
   ),
 );
+const semanticsPath = path.resolve(
+  readArg(
+    "semantics",
+    path.join(repositoryRoot, "schemas/ai-telemetry/v1/semantic-validation.mjs"),
+  ),
+);
 const validDirectory = path.resolve(
   readArg(
     "valid-dir",
@@ -59,22 +65,32 @@ const invalidDirectory = path.resolve(
 const ajv = new Ajv2020({ allErrors: true, strict: true });
 addFormats(ajv);
 const validate = ajv.compile(readJson(schemaPath));
+const { validateSignalOpsEventSemanticsV1 } = await import(pathToFileURL(semanticsPath).href);
 
 const failures = [];
 const validFiles = jsonFiles(validDirectory);
 const invalidFiles = jsonFiles(invalidDirectory);
 
 for (const filePath of validFiles) {
-  const accepted = validate(readJson(filePath));
+  const input = readJson(filePath);
+  const schemaAccepted = validate(input);
+  const semanticIssues = validateSignalOpsEventSemanticsV1(input);
+  const accepted = schemaAccepted && semanticIssues.length === 0;
   if (!accepted) {
+    const details = schemaAccepted
+      ? semanticIssues.map((issue) => `${issue.instancePath} ${issue.message}`).join("; ")
+      : ajv.errorsText(validate.errors, { separator: "; " });
     failures.push(
-      `${displayPath(filePath)} should be valid: ${ajv.errorsText(validate.errors, { separator: "; " })}`,
+      `${displayPath(filePath)} should be valid: ${details}`,
     );
   }
 }
 
 for (const filePath of invalidFiles) {
-  const accepted = validate(readJson(filePath));
+  const input = readJson(filePath);
+  const schemaAccepted = validate(input);
+  const semanticIssues = validateSignalOpsEventSemanticsV1(input);
+  const accepted = schemaAccepted && semanticIssues.length === 0;
   if (accepted) {
     failures.push(`${displayPath(filePath)} should be invalid but was accepted`);
   }
@@ -85,6 +101,6 @@ if (failures.length > 0) {
   process.exitCode = 1;
 } else {
   console.log(
-    `[contract:v1] schema=${displayPath(schemaPath)} valid=${validFiles.length} invalid=${invalidFiles.length}`,
+    `[contract:v1] schema=${displayPath(schemaPath)} semantics=${displayPath(semanticsPath)} valid=${validFiles.length} invalid=${invalidFiles.length}`,
   );
 }

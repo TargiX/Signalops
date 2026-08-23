@@ -2,6 +2,7 @@ import Ajv2020, { type ErrorObject } from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 
 import eventSchema from "../../../../schemas/ai-telemetry/v1/event.schema.json" with { type: "json" };
+import { validateSignalOpsEventSemanticsV1 } from "../../../../schemas/ai-telemetry/v1/semantic-validation.mjs";
 import type {
   SignalOpsContractIssueV1,
   SignalOpsEventV1,
@@ -19,6 +20,7 @@ addFormats(ajv);
 const validateSchema = ajv.compile<SignalOpsEventV1>(eventSchema);
 
 const forbiddenKeyTokens = [
+  "accesstoken",
   "apikey",
   "authorization",
   "credentials",
@@ -31,6 +33,7 @@ const forbiddenKeyTokens = [
   "prompt",
   "promptlength",
   "prompttext",
+  "providerapikey",
   "rawerror",
   "referenceimageurl",
   "referenceimageurls",
@@ -125,6 +128,7 @@ export function validateSignalOpsEventV1(input: unknown): SignalOpsEventValidati
   const schemaAccepted = validateSchema(input);
   const issues = [
     ...(schemaAccepted ? [] : (validateSchema.errors ?? []).map(issueFromAjv)),
+    ...validateSignalOpsEventSemanticsV1(input),
     ...privacyIssues(input),
   ];
 

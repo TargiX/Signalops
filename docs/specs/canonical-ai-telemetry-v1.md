@@ -100,6 +100,7 @@ Envelope invariants:
 
 - `id` MUST be stable across retries of delivery and unique within a SignalOps tenant.
 - `source` MUST be a stable URI identifying the producer, not a hostname generated per process.
+  Userinfo, query parameters, and fragments are forbidden so credentials cannot be embedded in it.
 - `subject` MUST be `operation/<operationId>` for operation and attempt events, or
   `provider/<providerKey>` for probes.
 - `time` MUST be UTC ISO-8601 with milliseconds.
@@ -408,9 +409,9 @@ MUST NOT turn a successful customer operation into a failure.
 ## 11. Versioning and compatibility
 
 - The event type suffix and `dataschema` version are normative.
-- Additive optional fields may be introduced within v1.
-- Removing a field, changing its meaning, tightening an accepted enum, or changing money/status
-  semantics requires v2.
+- V1 is closed-world. Adding, removing, or renaming any field changes the accepted instance set and
+  requires v2.
+- Changing a field's meaning, an accepted enum, or money/status semantics also requires v2.
 - SignalOps MUST retain v1 ingestion for at least one documented migration window after v2 ships.
 - Client adapters MUST pin a contract version and pass shared fixtures before release.
 - The existing prototype event shapes are v0. SignalOps may provide a v0-to-v1 compatibility
