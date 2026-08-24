@@ -199,7 +199,7 @@ export function ProductHome() {
             </motion.div>
           </div>
 
-          <motion.div variants={itemVariants} className="relative min-h-[360px] sm:min-h-[460px] lg:min-h-[520px]">
+          <motion.div variants={itemVariants} className="relative">
             <SignalCartography />
           </motion.div>
         </motion.section>
@@ -373,10 +373,12 @@ function Header() {
   );
 }
 
+// The 720x520 canvas is scaled down below lg, so each wrapper height must stay 520 * scale —
+// a transform does not shrink the layout box, so a taller wrapper leaves dead space under the graphic.
 function SignalCartography() {
   return (
-    <div className="relative h-[360px] w-full overflow-visible sm:h-[460px] lg:h-[540px]">
-      <div className="absolute left-0 top-0 h-[520px] w-[720px] origin-top-left scale-[0.52] rounded-lg border border-[#e9eefb] bg-white/72 shadow-[inset_0_1px_0_rgba(255,255,255,0.86)] sm:scale-[0.76] lg:left-[5%] lg:w-full lg:scale-100">
+    <div className="relative h-[219px] w-full overflow-visible sm:h-[396px] md:h-[494px] lg:h-[540px]">
+      <div className="absolute left-0 top-0 h-[520px] w-[720px] origin-top-left scale-[0.42] rounded-lg border border-[#e9eefb] bg-white/72 shadow-[inset_0_1px_0_rgba(255,255,255,0.86)] sm:scale-[0.76] md:scale-[0.95] lg:left-[5%] lg:w-full lg:scale-100">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_50%,rgba(74,109,240,0.12),transparent_24%),radial-gradient(circle_at_50%_50%,transparent_0_25%,rgba(93,126,225,0.08)_25.3%,transparent_25.8%,transparent_37%,rgba(93,126,225,0.07)_37.3%,transparent_37.8%,transparent_49%,rgba(93,126,225,0.06)_49.3%,transparent_49.8%)]" />
         <div className="absolute inset-0 opacity-30 [background-image:radial-gradient(#7fa0ff_1px,transparent_1.2px)] [background-size:18px_18px]" />
         <div className="absolute left-5 top-5 z-10 flex items-center gap-4">
