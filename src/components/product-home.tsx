@@ -6,8 +6,11 @@ import {
   Bell,
   Bot,
   Box,
+  Check,
   CircleDollarSign,
+  Copy,
   GitBranch,
+  KeyRound,
   Layers,
   Lock,
   Network,
@@ -16,6 +19,7 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
+  Terminal,
   Zap,
 } from "lucide-react";
 import Image from "next/image";
@@ -26,10 +30,12 @@ import { useState } from "react";
 import { buttonVariants } from "@/components/ui/button";
 import { getOpsSnapshot, type Generation, type Incident, type Provider } from "@/lib/mock-data";
 import { captureProductEvent } from "@/lib/product-analytics";
+import { buildSignalOpsCurlQuickstartV1 } from "@/lib/signalops/v1/quickstart";
 import { cn, formatCurrency, formatMs, formatNumber } from "@/lib/utils";
 
 const navItems = [
   { label: "Product", href: "/#product" },
+  { label: "Connect", href: "/#connect" },
   { label: "Workflow", href: "/#workflow" },
   { label: "Docs", href: "/docs" },
   { label: "Pricing", href: "/pricing" },
@@ -204,6 +210,8 @@ export function ProductHome() {
           </motion.div>
         </motion.section>
 
+        <ConnectPath />
+
         <motion.section
           variants={containerVariants}
           initial="hidden"
@@ -285,6 +293,10 @@ export function ProductHome() {
             visual={<CockpitCharts />}
           />
         </motion.section>
+
+        <UseCases />
+
+        <PrivacyBand />
 
         <motion.section
           variants={containerVariants}
@@ -370,6 +382,228 @@ function Header() {
         </Link>
       </div>
     </header>
+  );
+}
+
+const useCases = [
+  {
+    icon: RadioTower,
+    title: "Provider incident",
+    text: "A vendor degrades. Separate their failure from yours before support tickets arrive.",
+  },
+  {
+    icon: GitBranch,
+    title: "Fallback leakage",
+    text: "Traffic quietly rides the fallback route. See the share, the cost, and how long it lasted.",
+  },
+  {
+    icon: Activity,
+    title: "Latency regression",
+    text: "The p95 tail moves. Attribute it to a model, a route, or a retry storm.",
+  },
+  {
+    icon: CircleDollarSign,
+    title: "Cost anomaly",
+    text: "Spend drifts without volume. Trace it to the attempts and retries that caused it.",
+  },
+];
+
+const privacyFacts = [
+  {
+    icon: Lock,
+    title: "No prompts or media",
+    text: "The contract rejects prompts, completions, media, identities, URLs, and stack traces at ingest.",
+  },
+  {
+    icon: KeyRound,
+    title: "Digest-only keys",
+    text: "Ingest credentials are stored as digests, scoped per workspace, and revocable or rotatable at any time.",
+  },
+  {
+    icon: ShieldCheck,
+    title: "Your provider keys stay yours",
+    text: "SignalOps never holds or proxies provider credentials. Route keys stay opaque identifiers.",
+  },
+];
+
+function UseCases() {
+  return (
+    <motion.section
+      variants={containerVariants}
+      initial="hidden"
+      whileInView="visible"
+      viewport={{ once: true, amount: 0.2 }}
+      className="mt-5"
+    >
+      <motion.div variants={itemVariants} className="max-w-[560px]">
+        <p className="font-mono text-[10px] font-bold uppercase text-[var(--mute)]">Use cases</p>
+        <h2 className="mt-2 text-2xl font-bold text-[var(--text-strong)] sm:text-3xl">Four questions you cannot answer today.</h2>
+      </motion.div>
+      <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {useCases.map((item) => (
+          <motion.article
+            key={item.title}
+            variants={itemVariants}
+            className="rounded-lg border border-[var(--border)] bg-white/90 p-5 shadow-[var(--shadow-panel)]"
+          >
+            <span className="grid size-8 place-items-center rounded-lg bg-[#eef3ff] text-[var(--accent)]">
+              <item.icon className="size-4" />
+            </span>
+            <h3 className="mt-4 text-[13px] font-bold text-[var(--text-strong)]">{item.title}</h3>
+            <p className="mt-2 text-[12px] leading-5 text-[var(--text-dim)]">{item.text}</p>
+          </motion.article>
+        ))}
+      </div>
+    </motion.section>
+  );
+}
+
+function PrivacyBand() {
+  return (
+    <motion.section
+      variants={containerVariants}
+      initial="hidden"
+      whileInView="visible"
+      viewport={{ once: true, amount: 0.2 }}
+      className="mt-5 rounded-lg border border-[var(--border)] bg-white/90 p-6 shadow-[var(--shadow-panel)] sm:p-8"
+    >
+      <motion.div variants={itemVariants} className="flex flex-wrap items-end justify-between gap-4">
+        <div className="max-w-[560px]">
+          <p className="font-mono text-[10px] font-bold uppercase text-[var(--mute)]">Privacy by construction</p>
+          <h2 className="mt-2 text-2xl font-bold text-[var(--text-strong)] sm:text-3xl">Evidence without the payload.</h2>
+        </div>
+        <Link href="/security" className="text-[13px] font-semibold text-[var(--accent)] hover:underline">
+          Security details
+        </Link>
+      </motion.div>
+      <div className="mt-6 grid gap-5 sm:grid-cols-3">
+        {privacyFacts.map((item) => (
+          <motion.article key={item.title} variants={itemVariants}>
+            <span className="grid size-8 place-items-center rounded-lg bg-[#eef3ff] text-[var(--accent)]">
+              <item.icon className="size-4" />
+            </span>
+            <h3 className="mt-4 text-[13px] font-bold text-[var(--text-strong)]">{item.title}</h3>
+            <p className="mt-2 text-[12px] leading-5 text-[var(--text-dim)]">{item.text}</p>
+          </motion.article>
+        ))}
+      </div>
+    </motion.section>
+  );
+}
+
+const connectSteps = [
+  {
+    icon: Sparkles,
+    title: "Create a workspace",
+    text: "Sign in and name the workspace. No card, no sales call, no scheduled demo.",
+  },
+  {
+    icon: KeyRound,
+    title: "Issue a scoped key",
+    text: "Onboarding mints one revocable, server-side ingest credential. Rotate or revoke it at any time.",
+  },
+  {
+    icon: Terminal,
+    title: "Send your first signal",
+    text: "Paste the command below. The operation shows up in your live cockpit, not a sandbox.",
+  },
+];
+
+// Generated from the same builder the docs and onboarding use, and validated against the V1
+// contract in scripts/test-signalops-self-serve-v1.mjs, so the published command actually runs.
+const connectCurl = buildSignalOpsCurlQuickstartV1({ endpoint: "https://signalops.cc/v1/events" });
+
+function ConnectPath() {
+  const [copied, setCopied] = useState(false);
+
+  async function copyCurl() {
+    try {
+      await navigator.clipboard.writeText(connectCurl);
+      setCopied(true);
+      captureProductEvent("home_cta_clicked", { action: "copy_curl", placement: "connect" });
+      window.setTimeout(() => setCopied(false), 2_000);
+    } catch {
+      setCopied(false);
+    }
+  }
+
+  return (
+    <motion.section
+      variants={containerVariants}
+      initial="hidden"
+      whileInView="visible"
+      viewport={{ once: true, amount: 0.15 }}
+      id="connect"
+      className="mt-5 scroll-mt-24 rounded-lg border border-[var(--border)] bg-white/90 p-6 shadow-[var(--shadow-panel)] sm:p-8"
+    >
+      <motion.div variants={itemVariants} className="max-w-[560px]">
+        <p className="font-mono text-[10px] font-bold uppercase text-[var(--mute)]">Connect · raw HTTP</p>
+        <h2 className="mt-2 text-2xl font-bold text-[var(--text-strong)] sm:text-3xl">Three steps to your first live signal.</h2>
+        <p className="mt-3 text-[14px] leading-6 text-[var(--text-dim)]">
+          SignalOps reads five lifecycle boundaries over plain HTTP. There is no SDK to adopt and no provider
+          credential to hand over — your application keeps its own routing.
+        </p>
+      </motion.div>
+
+      <div className="mt-7 grid gap-6 lg:grid-cols-[0.82fr_1.18fr] lg:items-start">
+        <motion.ol variants={itemVariants} className="relative grid gap-5">
+          <span className="absolute left-[13px] top-4 h-[calc(100%-32px)] w-px bg-[#dce5fb]" />
+          {connectSteps.map((step, index) => (
+            <li key={step.title} className="relative grid grid-cols-[28px_36px_1fr] gap-4">
+              <span className="grid size-7 place-items-center rounded-full border border-[#d7e1fb] bg-white font-mono text-[11px] font-bold text-[var(--accent)]">
+                {index + 1}
+              </span>
+              <span className="grid size-8 place-items-center rounded-lg bg-[#eef3ff] text-[var(--accent)]">
+                <step.icon className="size-4" />
+              </span>
+              <span>
+                <span className="block text-[13px] font-bold text-[var(--text-strong)]">{step.title}</span>
+                <span className="mt-1 block text-[12px] leading-5 text-[var(--text-dim)]">{step.text}</span>
+              </span>
+            </li>
+          ))}
+          <li className="mt-1 flex flex-wrap items-center gap-4">
+            <Link
+              href="/onboarding"
+              onClick={() =>
+                captureProductEvent("home_cta_clicked", {
+                  action: "start_free",
+                  placement: "connect",
+                })
+              }
+              className={cn(
+                buttonVariants({ size: "lg" }),
+                "h-11 rounded-lg bg-[var(--accent)] px-5 text-[13px] font-semibold text-white hover:bg-[var(--accent-hover)]",
+              )}
+            >
+              Get a key
+              <ArrowRight className="ml-2 size-4" />
+            </Link>
+            <Link href="/docs" className="text-[13px] font-semibold text-[var(--text-dim)] transition-colors hover:text-[var(--accent)]">
+              Read the contract
+            </Link>
+          </li>
+        </motion.ol>
+
+        <motion.div variants={itemVariants} className="min-w-0 overflow-hidden rounded-lg border border-[#1d2b52] bg-[#07122b] shadow-[0_22px_52px_rgba(62,88,145,0.16)]">
+          <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
+            <span className="flex items-center gap-2 font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-white">
+              <Terminal className="size-3.5 text-[#79a0ff]" />
+              first-signal.sh
+            </span>
+            <button
+              type="button"
+              onClick={copyCurl}
+              className="inline-flex items-center gap-1.5 rounded-md border border-white/15 px-2.5 py-1 font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-[#dce6ff] transition-colors hover:bg-white/10"
+            >
+              {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
+              {copied ? "Copied" : "Copy"}
+            </button>
+          </div>
+          <pre className="max-h-[220px] overflow-auto p-4 text-[11px] leading-5 text-[#dce6ff] sm:max-h-[320px]"><code>{connectCurl}</code></pre>
+        </motion.div>
+      </div>
+    </motion.section>
   );
 }
 

@@ -10,7 +10,12 @@ import {
   rotateSignalOpsIngestCredentialV1,
   signalOpsCredentialExpiryV1,
 } from "../src/lib/signalops/v1/workspace-provisioning.ts";
-import { buildSignalOpsRawHttpQuickstartV1 } from "../src/lib/signalops/v1/quickstart.ts";
+import {
+  buildSignalOpsCurlQuickstartV1,
+  buildSignalOpsRawHttpQuickstartV1,
+  signalOpsQuickstartOperationEventsV1,
+} from "../src/lib/signalops/v1/quickstart.ts";
+import { normalizeSignalOpsEventBatchV1 } from "../src/lib/signalops/v1/contract.ts";
 
 assert.equal(normalizeSignalOpsWorkspaceNameV1("  Acme   Generation  "), "Acme Generation");
 assert.equal(normalizeSignalOpsCredentialNameV1(" Production   worker "), "Production worker");
@@ -43,6 +48,30 @@ assert.match(quickstart, /provider_reported/);
 assert.doesNotMatch(quickstart, /sop_live_/);
 assert.throws(
   () => buildSignalOpsRawHttpQuickstartV1({ endpoint: "https://user:secret@signalops.cc/v1/events" }),
+  /must not contain credentials/,
+);
+
+// The landing page publishes this curl, so its payload must satisfy the V1 contract as written.
+// Timestamps are the trap: the envelope demands millisecond precision that `date` omits by default.
+const shellTimestamp = new Date().toISOString().replace(/\.\d{3}Z$/, ".000Z");
+const curlBatch = normalizeSignalOpsEventBatchV1({
+  events: signalOpsQuickstartOperationEventsV1({
+    operationId: "op_1756049000",
+    time: shellTimestamp,
+  }),
+});
+assert.equal(curlBatch.rejected.length, 0, JSON.stringify(curlBatch.rejected));
+assert.equal(curlBatch.events.length, 2);
+
+const curlQuickstart = buildSignalOpsCurlQuickstartV1({ endpoint: "https://signalops.cc/v1/events" });
+assert.match(curlQuickstart, /date -u \+%Y-%m-%dT%H:%M:%S\.000Z/);
+assert.match(curlQuickstart, /Bearer \$SIGNALOPS_INGEST_CREDENTIAL/);
+assert.match(curlQuickstart, /com\.signalops\.ai\.operation\.terminal\.v1/);
+assert.doesNotMatch(curlQuickstart, /sop_live_/);
+// Shell expands ${OPERATION}; a bare $OPERATION_accepted would resolve to the wrong variable.
+assert.doesNotMatch(curlQuickstart, /\$OPERATION_/);
+assert.throws(
+  () => buildSignalOpsCurlQuickstartV1({ endpoint: "https://user:secret@signalops.cc/v1/events" }),
   /must not contain credentials/,
 );
 
