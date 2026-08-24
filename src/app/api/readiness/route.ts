@@ -18,6 +18,7 @@ import {
   getSignalOpsSupabaseConfigV1,
   signalOpsSupabaseRestRequestV1,
 } from "@/lib/signalops/v1/supabase";
+import { isSignalOpsPublicSignupEnabledV1 } from "@/lib/signalops/v1/workspace-provisioning";
 
 export const runtime = "nodejs";
 
@@ -40,7 +41,7 @@ async function hostedOperationalState(): Promise<HostedState> {
       or: `(expires_at.is.null,expires_at.gt.${now})`,
       limit: "1",
     });
-    const [projections, incidents, tenants, credentials, memberships] = await Promise.all([
+    const [projections, incidents, milestones, tenants, credentials, memberships] = await Promise.all([
       signalOpsSupabaseRestRequestV1(
         config,
         "signalops_v1_projection_snapshots?select=tenant_id&limit=1",
@@ -48,6 +49,10 @@ async function hostedOperationalState(): Promise<HostedState> {
       signalOpsSupabaseRestRequestV1(
         config,
         "signalops_v1_incidents?select=tenant_id&limit=1",
+      ),
+      signalOpsSupabaseRestRequestV1(
+        config,
+        "signalops_v1_product_milestones?select=tenant_id&limit=1",
       ),
       signalOpsSupabaseRestRequestV1<Array<{ id: string }>>(
         config,
@@ -63,7 +68,10 @@ async function hostedOperationalState(): Promise<HostedState> {
       ),
     ]);
     return {
-      schema: Array.isArray(projections) && Array.isArray(incidents),
+      schema:
+        Array.isArray(projections) &&
+        Array.isArray(incidents) &&
+        Array.isArray(milestones),
       activeTenant: tenants.length > 0,
       activeCredential: credentials.length > 0,
       operatorMembership: memberships.length > 0,
@@ -87,6 +95,14 @@ export async function GET() {
     process.env.SIGNALOPS_ALERT_WEBHOOK_URL?.trim() &&
       (process.env.SIGNALOPS_ALERT_WEBHOOK_SECRET?.trim().length ?? 0) >= 32,
   );
+  const publicSignup = isSignalOpsPublicSignupEnabledV1();
+  const pilotRequests = Boolean(
+    (process.env.SIGNALOPS_PILOT_REQUEST_WEBHOOK_URL?.trim() &&
+      (process.env.SIGNALOPS_PILOT_REQUEST_WEBHOOK_SECRET?.trim().length ?? 0) >= 32) ||
+      (process.env.SIGNALOPS_PILOT_REQUEST_EMAIL_TO?.trim() &&
+        process.env.SIGNALOPS_PILOT_REQUEST_EMAIL_FROM?.trim() &&
+        process.env.SIGNALOPS_RESEND_API_KEY?.trim()),
+  );
   let storageReachable = false;
   if (storage !== "unavailable") {
     try {
@@ -108,7 +124,12 @@ export async function GET() {
       (process.env.SIGNALOPS_INGEST_TOKEN?.trim() ||
         process.env.SIGNALOPS_INGEST_TOKEN_HASH?.trim()),
   );
-  const ingestAuth = storage === "supabase" ? hosted.activeCredential : bootstrapIngestAuth;
+  const ingestAuth =
+    storage === "supabase"
+      ? publicSignup
+        ? hosted.schema
+        : hosted.activeCredential
+      : bootstrapIngestAuth;
   const operatorAuth = passwordAuth || (supabaseAuth && (emailOtp || oauthProviders.length > 0));
   const localReady =
     storage !== "unavailable" && storageReachable && operatorAuth && ingestAuth;
@@ -116,9 +137,8 @@ export async function GET() {
     storage === "supabase" &&
     storageReachable &&
     hosted.schema &&
-    hosted.activeTenant &&
-    hosted.activeCredential &&
-    hosted.operatorMembership &&
+    (publicSignup ||
+      (hosted.activeTenant && hosted.activeCredential && hosted.operatorMembership)) &&
     Boolean(getSignalOpsSupabaseAuthConfigV1()) &&
     operatorAuth &&
     rateLimiting &&
@@ -127,10 +147,12 @@ export async function GET() {
     publicUrl &&
     alerting &&
     ingestAuth;
+  const publicBetaReady = productionReady && publicSignup && pilotRequests;
   return NextResponse.json(
     {
       ok: process.env.NODE_ENV === "production" ? productionReady : localReady,
       productionReady,
+      publicBetaReady,
       service: "signalops",
       contract: "ai-telemetry/v1",
       checks: {
@@ -154,6 +176,8 @@ export async function GET() {
         retention,
         publicUrl,
         alerting,
+        publicSignup,
+        pilotRequests,
       },
     },
     {

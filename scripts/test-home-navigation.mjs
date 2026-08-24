@@ -35,7 +35,7 @@ await access(validatePagePath);
 const canonicalIncidentUrl = buildCanonicalIncidentUrl("inc_411");
 assert.equal(
   canonicalIncidentUrl,
-  "https://signalops.ilyamoskovkin.com/incidents/inc_411#handoff",
+  "https://signalops.cc/incidents/inc_411#handoff",
 );
 
 const layoutSource = await readFile(layoutSourcePath, "utf8");

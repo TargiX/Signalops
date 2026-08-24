@@ -2,13 +2,22 @@
   "name": "@signalops/producer-node",
   "version": "0.1.0",
   "description": "Framework-neutral, privacy-safe Node.js producer adapter for SignalOps V1",
+  "keywords": ["ai", "observability", "telemetry", "llmops", "producer"],
+  "homepage": "https://signalops.cc/docs",
+  "bugs": { "url": "https://github.com/TargiX/signalops/issues" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TargiX/signalops.git",
+    "directory": "packages/producer-node"
+  },
   "type": "module",
   "sideEffects": false,
   "engines": {
     "node": ">=20"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "provenance": true
   },
   "files": [
     "dist",
@@ -23,6 +32,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "prepack": "pnpm build",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

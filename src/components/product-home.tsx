@@ -28,7 +28,13 @@ import { getOpsSnapshot, type Generation, type Incident, type Provider } from "@
 import { captureProductEvent } from "@/lib/product-analytics";
 import { cn, formatCurrency, formatMs, formatNumber } from "@/lib/utils";
 
-const navItems = ["Product", "Solutions", "Resources", "Pricing", "Docs"];
+const navItems = [
+  { label: "Product", href: "/#product" },
+  { label: "Workflow", href: "/#workflow" },
+  { label: "Docs", href: "/docs" },
+  { label: "Pricing", href: "/pricing" },
+  { label: "Security", href: "/security" },
+];
 
 const providers: Array<{
   name: string;
@@ -58,8 +64,8 @@ const loop = [
   },
   {
     icon: GitBranch,
-    title: "Simulate",
-    text: "Preview jobs moved, p95 reduction, failure cut, and cost impact.",
+    title: "Compare",
+    text: "Compare operations, provider routes, attempts, failures, latency, and cost evidence.",
   },
   {
     icon: Network,
@@ -129,14 +135,14 @@ export function ProductHome() {
               becomes damage.
             </motion.h1>
             <motion.p variants={itemVariants} className="mt-6 max-w-[420px] text-[15px] leading-7 text-[var(--text-dim)]">
-              SignalOps OS turns latency tails, retries, cost leakage, and provider incidents into one repeatable workflow. Detect, triage, and simulate routing rules in real time.
+              SignalOps turns latency tails, retries, cost leakage, and provider incidents into one evidence trail. Detect, triage, compare routes, and verify outcomes without collecting prompts or media.
             </motion.p>
             <motion.div variants={itemVariants} className="mt-8 flex flex-wrap items-center gap-4">
               <Link
-                href="/cockpit"
+                href="/onboarding"
                 onClick={() =>
                   captureProductEvent("home_cta_clicked", {
-                    action: "enter_cockpit",
+                    action: "start_free",
                     placement: "hero",
                   })
                 }
@@ -145,7 +151,7 @@ export function ProductHome() {
                   "h-11 rounded-lg bg-[var(--accent)] px-5 text-[13px] font-semibold text-white shadow-[0_16px_30px_rgba(42,80,214,0.22)] hover:bg-[var(--accent-hover)]",
                 )}
               >
-                Enter Operations Cockpit
+                Start monitoring free
                 <ArrowRight className="ml-2 size-4" />
               </Link>
               <Link
@@ -183,13 +189,12 @@ export function ProductHome() {
               </Link>
             </motion.div>
             <motion.div variants={itemVariants} className="mt-14">
-              <p className="font-mono text-[10px] font-bold uppercase text-[var(--mute)]">Trusted by leading AI teams</p>
-              <div className="mt-5 flex flex-wrap items-center gap-x-7 gap-y-3 text-[12px] font-semibold text-[#8c97ad]">
-                <span>LUMEN</span>
-                <span>▲ Vercel</span>
-                <span>◇ CURSOR</span>
-                <span>perplexity</span>
-                <span>syntheisa</span>
+              <p className="font-mono text-[10px] font-bold uppercase text-[var(--mute)]">Built for provider-neutral AI operations</p>
+              <div className="mt-5 flex flex-wrap items-center gap-x-6 gap-y-3 font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-[#78859c]">
+                <span>Canonical V1</span>
+                <span>Digest-only keys</span>
+                <span>No prompts</span>
+                <span>Revocable access</span>
               </div>
             </motion.div>
           </div>
@@ -203,13 +208,14 @@ export function ProductHome() {
           variants={containerVariants}
           initial="hidden"
           animate="visible"
-          className="grid gap-5 lg:grid-cols-[1.35fr_0.9fr]"
+          id="product"
+          className="grid scroll-mt-24 gap-5 lg:grid-cols-[1.35fr_0.9fr]"
         >
           <motion.div variants={itemVariants}>
             <section className="rounded-lg border border-[var(--border)] bg-white/90 p-6 shadow-[var(--shadow-panel)]">
               <div className="mb-6 flex items-start justify-between gap-4">
                 <div>
-                  <p className="font-mono text-[10px] font-bold uppercase text-[var(--mute)]">Live Snapshot</p>
+                  <p className="font-mono text-[10px] font-bold uppercase text-[var(--mute)]">Interactive product preview</p>
                   <h2 className="mt-2 text-xl font-bold text-[var(--text-strong)]">Current operating picture</h2>
                 </div>
                 <QuietStatus />
@@ -230,7 +236,7 @@ export function ProductHome() {
           </motion.div>
 
           <motion.div variants={itemVariants}>
-            <section className="h-full rounded-lg border border-[var(--border)] bg-white/90 p-7 shadow-[var(--shadow-panel)]">
+            <section id="workflow" className="h-full scroll-mt-24 rounded-lg border border-[var(--border)] bg-white/90 p-7 shadow-[var(--shadow-panel)]">
               <p className="font-mono text-[10px] font-bold uppercase text-[var(--mute)]">Product Loop</p>
               <h2 className="mt-2 text-xl font-bold text-[var(--text-strong)]">From signal to change</h2>
               <ol className="relative mt-7 space-y-5">
@@ -268,8 +274,8 @@ export function ProductHome() {
           />
           <PillarCard
             icon={GitBranch}
-            title="Routing rules"
-            text="Rules move through draft, simulated, optimistic, and active states using modern server-state patterns."
+            title="Provider-route evidence"
+            text="Explicit attempt boundaries separate provider behavior from the overall customer-visible operation."
             visual={<RuleRows />}
           />
           <PillarCard
@@ -298,17 +304,17 @@ export function ProductHome() {
               </p>
               <div className="mt-7 flex flex-wrap gap-4">
                 <Link
-                  href="/cockpit"
+                  href="/onboarding"
                   className={cn(
                     buttonVariants({ size: "lg" }),
                     "h-11 rounded-lg bg-[var(--accent)] px-5 text-[13px] font-semibold text-white hover:bg-[var(--accent-hover)]",
                   )}
                 >
-                  Enter Operations Cockpit
+                  Start monitoring free
                   <ArrowRight className="ml-2 size-4" />
                 </Link>
                 <Link
-                  href="/cockpit"
+                  href="/contact"
                   className={cn(
                     buttonVariants({ variant: "outline", size: "lg" }),
                     "h-11 rounded-lg border-[var(--border)] bg-white/72 px-5 text-[13px] font-semibold text-[var(--text)] hover:bg-white",
@@ -336,12 +342,12 @@ function Header() {
           <SignalGlyph className="size-6" />
         </span>
         <span className="text-lg font-bold text-[var(--accent)]">SignalOps OS</span>
-        <span className="text-xs font-semibold text-[var(--mute)]">v2.0</span>
+        <span className="rounded-full bg-[var(--accent-soft)] px-2 py-0.5 font-mono text-[8px] font-bold uppercase text-[var(--accent)]">Public beta</span>
       </Link>
       <nav className="hidden items-center gap-9 text-[12px] font-semibold text-[var(--text-dim)] lg:flex">
         {navItems.map((item) => (
-          <Link key={item} href="/cockpit" className="hover:text-[var(--text)]">
-            {item}
+          <Link key={item.href} href={item.href} className="hover:text-[var(--text)]">
+            {item.label}
           </Link>
         ))}
       </nav>
@@ -353,13 +359,13 @@ function Header() {
           Log in
         </Link>
         <Link
-          href="/cockpit"
+          href="/onboarding"
           className={cn(
             buttonVariants({ size: "sm" }),
             "h-9 rounded-lg bg-[var(--accent)] px-4 text-[12px] font-semibold text-white shadow-[0_12px_24px_rgba(42,80,214,0.18)] hover:bg-[var(--accent-hover)]",
           )}
         >
-          Book a demo
+          Start free
           <ArrowRight className="ml-2 size-4" />
         </Link>
       </div>
@@ -495,7 +501,7 @@ function QuietStatus() {
   return (
     <span className="inline-flex items-center gap-2 pt-1 text-[11px] font-semibold text-[#4b9d72]">
       <span className="size-1.5 rounded-full bg-[#31c97d]" />
-      Live
+      Synthetic preview
     </span>
   );
 }
@@ -554,10 +560,10 @@ function IncidentLaunchpad({
   } satisfies Record<Incident["severity"], string>;
 
   return (
-    <section className="mt-5 rounded-lg border border-[var(--border)] bg-white/72 p-5 shadow-sm" aria-label="Live incident queue">
+    <section className="mt-5 rounded-lg border border-[var(--border)] bg-white/72 p-5 shadow-sm" aria-label="Preview incident queue">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <p className="font-mono text-[10px] font-bold uppercase text-[var(--mute)]">Live incident queue</p>
+          <p className="font-mono text-[10px] font-bold uppercase text-[var(--mute)]">Preview incident queue</p>
           <p className="mt-1 text-[12px] text-[var(--text-dim)]">Choose a signal, then open its investigation.</p>
         </div>
         <span className="rounded-full border border-[var(--border)] bg-white px-2.5 py-1 font-mono text-[10px] font-bold text-[var(--mute)]">
@@ -763,19 +769,20 @@ function Footer() {
       <Link href="/" className="flex items-center gap-3">
         <SignalGlyph className="size-6 text-[var(--accent)]" />
         <span className="text-[15px] font-bold text-[var(--accent)]">SignalOps OS</span>
-        <span className="text-[11px] font-semibold text-[var(--mute)]">v2.0</span>
+        <span className="font-mono text-[9px] font-bold uppercase text-[var(--mute)]">Public beta</span>
       </Link>
       <nav className="hidden gap-12 text-[11px] font-semibold text-[var(--mute)] md:flex">
         {navItems.map((item) => (
-          <Link key={item} href="/cockpit">
-            {item}
+          <Link key={item.href} href={item.href}>
+            {item.label}
           </Link>
         ))}
       </nav>
-      <div className="flex gap-6 text-[11px] font-semibold text-[var(--mute)]">
-        <span>SOC 2</span>
-        <span>GDPR</span>
-        <span>99.9% SLA</span>
+      <div className="flex flex-wrap gap-5 text-[11px] font-semibold text-[var(--mute)]">
+        <Link href="/security">Security</Link>
+        <Link href="/privacy">Privacy</Link>
+        <Link href="/terms">Terms</Link>
+        <Link href="/status">Status</Link>
       </div>
     </footer>
   );

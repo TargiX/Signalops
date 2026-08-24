@@ -35,6 +35,30 @@ export function captureProductEvent(
   }
 }
 
+export function identifyProductUser(input: {
+  subject: string;
+  tenantId: string;
+  role: "owner" | "operator" | "viewer";
+}) {
+  if (!isPostHogConfigured()) return;
+  try {
+    posthog.identify(input.subject, { account_type: "operator" });
+    posthog.group("workspace", input.tenantId, { lifecycle: "active" });
+    posthog.register({ workspace_role: input.role });
+  } catch {
+    // Identity stitching is best-effort and never blocks authenticated product use.
+  }
+}
+
+export function resetProductIdentity() {
+  if (!isPostHogConfigured()) return;
+  try {
+    posthog.reset();
+  } catch {
+    // Sign-out remains authoritative when analytics storage is unavailable.
+  }
+}
+
 export function captureProductException(
   error: unknown,
   properties?: AnalyticsProperties,

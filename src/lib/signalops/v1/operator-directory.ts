@@ -90,3 +90,22 @@ export async function listActiveSignalOpsTenantsV1(): Promise<SignalOpsTenantSum
   );
   return tenants.map((tenant) => ({ tenantId: tenant.id, tenantName: tenant.name }));
 }
+
+export async function resolveSignalOpsWorkspaceOwnerSubjectV1(
+  tenantId: string,
+): Promise<string | null> {
+  const config = getSignalOpsSupabaseConfigV1();
+  if (!config) return null;
+  const filters = new URLSearchParams({
+    select: "subject",
+    tenant_id: `eq.${tenantId}`,
+    role: "eq.owner",
+    order: "created_at.asc,subject.asc",
+    limit: "1",
+  });
+  const rows = await signalOpsSupabaseRestRequestV1<Array<{ subject: string }>>(
+    config,
+    `signalops_v1_operator_memberships?${filters}`,
+  );
+  return rows[0]?.subject ?? null;
+}

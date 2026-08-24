@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { captureServerProductEvent } from "@/lib/posthog-server";
 import { writeSignalOpsAuditEventV1 } from "@/lib/signalops/v1/audit";
 import { listSignalOpsOperatorMembershipsV1 } from "@/lib/signalops/v1/operator-directory";
 import {
@@ -14,14 +15,18 @@ import {
   createSignalOpsSupabaseServerClientV1,
   signalOpsPublicOriginV1,
 } from "@/lib/signalops/v1/supabase-auth";
+import { isSignalOpsPublicSignupEnabledV1 } from "@/lib/signalops/v1/workspace-provisioning";
 
 export const runtime = "nodejs";
 
 export async function GET(request: Request) {
   const origin = signalOpsPublicOriginV1(request);
   const requestId = `req_${crypto.randomUUID()}`;
-  const code = new URL(request.url).searchParams.get("code");
-  if (!code) return NextResponse.redirect(`${origin}/cockpit?auth=callback-invalid`);
+  const url = new URL(request.url);
+  const signup = url.searchParams.get("intent") === "signup";
+  const fallback = signup ? "/onboarding" : "/cockpit";
+  const code = url.searchParams.get("code");
+  if (!code) return NextResponse.redirect(`${origin}${fallback}?auth=callback-invalid`);
 
   try {
     await enforceSignalOpsRateLimitV1({
@@ -41,6 +46,21 @@ export async function GET(request: Request) {
     const membership =
       memberships.find((candidate) => candidate.tenantId === preferredTenant) ?? memberships[0];
     if (!membership) {
+      if (signup && isSignalOpsPublicSignupEnabledV1()) {
+        await writeSignalOpsAuditEventV1({
+          actorSubject: data.user.id,
+          action: "operator.signup_authenticated",
+          requestId,
+        });
+        await captureServerProductEvent({
+          distinctId: data.user.id,
+          event: "signup_completed",
+          properties: { auth_mode: "supabase" },
+        });
+        return NextResponse.redirect(`${origin}/onboarding?state=workspace`, {
+          headers: { "cache-control": "private, no-store" },
+        });
+      }
       await client.auth.signOut();
       await writeSignalOpsAuditEventV1({
         actorSubject: data.user.id,
@@ -69,6 +89,6 @@ export async function GET(request: Request) {
     return response;
   } catch (error) {
     console.error("[SignalOps] OAuth callback failed", { requestId, error });
-    return NextResponse.redirect(`${origin}/cockpit?auth=callback-failed`);
+    return NextResponse.redirect(`${origin}${fallback}?auth=callback-failed`);
   }
 }

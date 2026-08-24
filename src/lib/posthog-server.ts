@@ -5,6 +5,14 @@ type ServerEventProperties = Record<
   boolean | number | string | null | undefined
 >;
 
+type ServerProductEvent = {
+  distinctId: string;
+  event: string;
+  properties?: ServerEventProperties;
+  groups?: Record<string, string>;
+  sessionId?: string | null;
+};
+
 let client: PostHog | null | undefined;
 
 function getPostHogClient() {
@@ -32,19 +40,33 @@ export async function captureServerEvent(
   event: string,
   properties: ServerEventProperties,
 ) {
-  const posthog = getPostHogClient();
-  if (!posthog) {
-    return;
-  }
-
   const distinctId =
     request.headers.get("x-posthog-distinct-id") ?? `server_${crypto.randomUUID()}`;
   const sessionId = request.headers.get("x-posthog-session-id");
+
+  await captureServerProductEvent({
+    distinctId,
+    event,
+    properties,
+    sessionId,
+  });
+}
+
+export async function captureServerProductEvent({
+  distinctId,
+  event,
+  properties = {},
+  groups,
+  sessionId,
+}: ServerProductEvent) {
+  const posthog = getPostHogClient();
+  if (!posthog) return;
 
   try {
     await posthog.captureImmediate({
       distinctId,
       event,
+      groups,
       properties: {
         ...properties,
         ...(sessionId ? { $session_id: sessionId } : {}),
