@@ -217,7 +217,7 @@ export function ProductHome() {
           initial="hidden"
           animate="visible"
           id="product"
-          className="grid scroll-mt-24 gap-5 lg:grid-cols-[1.35fr_0.9fr]"
+          className="mt-5 grid scroll-mt-24 gap-5 lg:grid-cols-[1.35fr_0.9fr]"
         >
           <motion.div variants={itemVariants}>
             <section className="rounded-lg border border-[var(--border)] bg-white/90 p-6 shadow-[var(--shadow-panel)]">
@@ -546,23 +546,26 @@ function ConnectPath() {
       </motion.div>
 
       <div className="mt-7 grid gap-6 lg:grid-cols-[0.82fr_1.18fr] lg:items-start">
-        <motion.ol variants={itemVariants} className="relative grid gap-5">
-          <span className="absolute left-[13px] top-4 h-[calc(100%-32px)] w-px bg-[#dce5fb]" />
-          {connectSteps.map((step, index) => (
-            <li key={step.title} className="relative grid grid-cols-[28px_36px_1fr] gap-4">
-              <span className="grid size-7 place-items-center rounded-full border border-[#d7e1fb] bg-white font-mono text-[11px] font-bold text-[var(--accent)]">
-                {index + 1}
-              </span>
-              <span className="grid size-8 place-items-center rounded-lg bg-[#eef3ff] text-[var(--accent)]">
-                <step.icon className="size-4" />
-              </span>
-              <span>
-                <span className="block text-[13px] font-bold text-[var(--text-strong)]">{step.title}</span>
-                <span className="mt-1 block text-[12px] leading-5 text-[var(--text-dim)]">{step.text}</span>
-              </span>
-            </li>
-          ))}
-          <li className="mt-1 flex flex-wrap items-center gap-4">
+        <div className="grid gap-6">
+          <motion.ol variants={itemVariants} className="relative grid gap-5">
+            <span className="absolute left-[13px] top-4 h-[calc(100%-32px)] w-px bg-[#dce5fb]" />
+            {connectSteps.map((step, index) => (
+              <li key={step.title} className="relative grid grid-cols-[28px_36px_1fr] gap-4">
+                <span className="grid size-7 place-items-center rounded-full border border-[#d7e1fb] bg-white font-mono text-[11px] font-bold text-[var(--accent)]">
+                  {index + 1}
+                </span>
+                <span className="grid size-8 place-items-center rounded-lg bg-[#eef3ff] text-[var(--accent)]">
+                  <step.icon className="size-4" />
+                </span>
+                <span>
+                  <span className="block text-[13px] font-bold text-[var(--text-strong)]">{step.title}</span>
+                  <span className="mt-1 block text-[12px] leading-5 text-[var(--text-dim)]">{step.text}</span>
+                </span>
+              </li>
+            ))}
+          </motion.ol>
+
+          <motion.div variants={itemVariants} className="flex flex-wrap items-center gap-4">
             <Link
               href="/onboarding"
               onClick={() =>
@@ -582,8 +585,8 @@ function ConnectPath() {
             <Link href="/docs" className="text-[13px] font-semibold text-[var(--text-dim)] transition-colors hover:text-[var(--accent)]">
               Read the contract
             </Link>
-          </li>
-        </motion.ol>
+          </motion.div>
+        </div>
 
         <motion.div variants={itemVariants} className="min-w-0 overflow-hidden rounded-lg border border-[#1d2b52] bg-[#07122b] shadow-[0_22px_52px_rgba(62,88,145,0.16)]">
           <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
