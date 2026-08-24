@@ -17,6 +17,7 @@ import {
   isSignalOpsEmailOtpEnabledV1,
   signalOpsPublicOriginV1,
 } from "@/lib/signalops/v1/supabase-auth";
+import { isSignalOpsPublicSignupEnabledV1 } from "@/lib/signalops/v1/workspace-provisioning";
 
 export const runtime = "nodejs";
 
@@ -39,7 +40,17 @@ export async function POST(request: Request) {
       limit: 5,
       windowSeconds: 15 * 60,
     });
-    const body = (await readSignalOpsJsonBodyV1(request, 2 * 1_024)) as { email?: unknown };
+    const body = (await readSignalOpsJsonBodyV1(request, 2 * 1_024)) as {
+      email?: unknown;
+      intent?: unknown;
+    };
+    const signup = body.intent === "signup";
+    if (signup && !isSignalOpsPublicSignupEnabledV1()) {
+      return NextResponse.json(
+        { ok: false, requestId, code: "public_signup_disabled" },
+        { status: 403, headers: { "cache-control": "private, no-store" } },
+      );
+    }
     const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
     if (!emailPattern.test(email)) {
       return NextResponse.json(
@@ -53,15 +64,16 @@ export async function POST(request: Request) {
     const { error } = await client.auth.signInWithOtp({
       email,
       options: {
-        emailRedirectTo: `${origin}/api/cockpit/auth/callback`,
-        shouldCreateUser: false,
+        emailRedirectTo: `${origin}/api/cockpit/auth/callback${signup ? "?intent=signup" : ""}`,
+        shouldCreateUser: signup,
       },
     });
     if (error) throw error;
     await writeSignalOpsAuditEventV1({
       actorSubject: `request:${fingerprint}`,
-      action: "operator.email_otp_requested",
+      action: signup ? "operator.signup_email_requested" : "operator.email_otp_requested",
       requestId,
+      metadata: { intent: signup ? "signup" : "signin" },
     });
     return NextResponse.json(
       { ok: true, requestId },

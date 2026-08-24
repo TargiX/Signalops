@@ -2,13 +2,22 @@
   "name": "@signalops/contracts",
   "version": "1.0.0",
   "description": "Framework-neutral TypeScript types for SignalOps Canonical AI Telemetry V1",
+  "keywords": ["ai", "observability", "telemetry", "cloudevents", "llmops"],
+  "homepage": "https://signalops.cc/docs",
+  "bugs": { "url": "https://github.com/TargiX/signalops/issues" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TargiX/signalops.git",
+    "directory": "packages/contracts"
+  },
   "type": "module",
   "sideEffects": false,
   "engines": {
     "node": ">=20"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "provenance": true
   },
   "files": [
     "dist",
@@ -30,6 +39,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/copy-artifacts.mjs",
+    "prepack": "pnpm build",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {

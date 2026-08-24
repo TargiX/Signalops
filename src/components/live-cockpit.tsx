@@ -61,6 +61,11 @@ import {
 } from "@/components/charts";
 import { OperationTraceDrawer } from "@/components/operation-trace-drawer";
 import { dispatchCsvDownload, dispatchTextDownload } from "@/lib/csv-download";
+import {
+  captureProductEvent,
+  identifyProductUser,
+  resetProductIdentity,
+} from "@/lib/product-analytics";
 import type { SignalOpsIncidentV1 } from "@/lib/signalops/v1/incidents";
 import {
   applySignalOpsCockpitViewV1,
@@ -110,7 +115,13 @@ type SnapshotResponse =
 type SessionResponse = {
   ok: boolean;
   configured: boolean;
-  auth: { password: boolean; supabase: boolean; emailOtp: boolean; providers: string[] };
+  auth: {
+    password: boolean;
+    supabase: boolean;
+    emailOtp: boolean;
+    providers: string[];
+    publicSignup: boolean;
+  };
   session: null | {
     tenantId: string;
     tenantName: string;
@@ -132,7 +143,13 @@ type SlosResponse =
 const emptySession: SessionResponse = {
   ok: false,
   configured: false,
-  auth: { password: false, supabase: false, emailOtp: false, providers: [] },
+  auth: {
+    password: false,
+    supabase: false,
+    emailOtp: false,
+    providers: [],
+    publicSignup: false,
+  },
   session: null,
   memberships: [],
 };
@@ -588,6 +605,8 @@ export function LiveCockpit() {
   const operationTraceTriggerRef = useRef<HTMLElement | null>(null);
   const shortcutHelpRef = useRef<HTMLDivElement>(null);
   const feedbackTimerRef = useRef<number | null>(null);
+  const openedAnalyticsTenantRef = useRef<string | null>(null);
+  const snapshotAnalyticsTenantRef = useRef<string | null>(null);
 
   const load = useCallback(async (
     requestedRange: SignalOpsOpsRangeV1,
@@ -819,6 +838,7 @@ export function LiveCockpit() {
     setOperationTriage("all");
     setSelectedOperationIds([]);
     setComparisonOpen(false);
+    resetProductIdentity();
     setState("unauthorized");
     await load(range, "initial");
   }
@@ -832,6 +852,7 @@ export function LiveCockpit() {
     setProviderPage(1);
     setSelectedOperationIds([]);
     setComparisonOpen(false);
+    captureProductEvent("cockpit_range_selected", { range: value, surface: "live" });
     void load(value, "refresh");
   }, [load, pendingRange, range]);
 
@@ -948,6 +969,7 @@ export function LiveCockpit() {
   const openOperationTrace = useCallback((operationId: string, trigger: HTMLElement) => {
     operationTraceTriggerRef.current = trigger;
     setSelectedOperationId(operationId);
+    captureProductEvent("operation_opened", { surface: "live_cockpit" });
   }, []);
 
   const closeOperationTrace = useCallback(() => {
@@ -968,7 +990,7 @@ export function LiveCockpit() {
     [],
   );
 
-  const copyText = useCallback(async (value: string, successMessage: string) => {
+  const copyText = useCallback(async (value: string, successMessage: string): Promise<boolean> => {
     let timeoutId: number | null = null;
     try {
       if (!navigator.clipboard) throw new Error("clipboard unavailable");
@@ -982,12 +1004,43 @@ export function LiveCockpit() {
         }),
       ]);
       showFeedback(successMessage);
+      return true;
     } catch {
       showFeedback("Clipboard unavailable", "error");
+      return false;
     } finally {
       if (timeoutId !== null) window.clearTimeout(timeoutId);
     }
   }, [showFeedback]);
+
+  useEffect(() => {
+    const authenticated = session.session;
+    if (!authenticated) return;
+    identifyProductUser({
+      subject: authenticated.subject,
+      tenantId: authenticated.tenantId,
+      role: authenticated.role,
+    });
+    if (state === "ready" && openedAnalyticsTenantRef.current !== authenticated.tenantId) {
+      openedAnalyticsTenantRef.current = authenticated.tenantId;
+      captureProductEvent("cockpit_opened", {
+        role: authenticated.role,
+        range,
+        surface: "live",
+      });
+    }
+    if (
+      state === "ready" &&
+      snapshot &&
+      snapshotAnalyticsTenantRef.current !== authenticated.tenantId
+    ) {
+      snapshotAnalyticsTenantRef.current = authenticated.tenantId;
+      captureProductEvent("first_snapshot_viewed", {
+        range: snapshot.range,
+        has_operations: snapshot.totals.operations > 0,
+      });
+    }
+  }, [range, session.session, snapshot, state]);
 
   useEffect(() => {
     const tenantId = snapshot?.tenant.id;
@@ -1316,6 +1369,11 @@ export function LiveCockpit() {
           <a className="mt-6 inline-flex text-xs font-semibold text-[var(--text-dim)] hover:text-[var(--accent)]" href="/cockpit?mode=demo">
             Open the synthetic product demo instead
           </a>
+          {session.auth.publicSignup ? (
+            <p className="mt-3 text-xs text-[var(--text-dim)]">
+              New to SignalOps? <a href="/onboarding" className="font-bold text-[var(--accent)] hover:underline">Create a workspace</a>
+            </p>
+          ) : null}
         </section>
       </main>
     );
@@ -1554,7 +1612,12 @@ export function LiveCockpit() {
       filteredOperations.length,
       retainedOperations.length,
     );
-    await copyText(brief, "Investigation brief copied");
+    if (await copyText(brief, "Investigation brief copied")) {
+      captureProductEvent("investigation_brief_exported", {
+        range: displayedRange,
+        retained_match_count: filteredOperations.length,
+      });
+    }
   }
 
   function downloadSnapshotJson() {
@@ -1724,6 +1787,7 @@ export function LiveCockpit() {
               </select>
             ) : null}
             <a href="/cockpit?mode=demo" className="rounded-lg border border-[var(--border)] bg-white px-3 py-2 text-xs font-semibold text-[var(--text-dim)] hover:text-[var(--accent)]">Demo</a>
+            <a href="/settings" className="rounded-lg border border-[var(--border)] bg-white px-3 py-2 text-xs font-semibold text-[var(--text-dim)] hover:text-[var(--accent)]">Settings</a>
             <button onClick={() => void load(range, "refresh")} disabled={isRefreshing} className="grid size-9 place-items-center rounded-lg border border-[var(--border)] bg-white text-[var(--text-dim)] hover:text-[var(--accent)] disabled:cursor-wait disabled:opacity-50" aria-label="Refresh"><RefreshCw className={`size-4 ${isRefreshing ? "animate-spin" : ""}`} /></button>
             <button onClick={() => void logout()} className="grid size-9 place-items-center rounded-lg border border-[var(--border)] bg-white text-[var(--text-dim)] hover:text-rose-600" aria-label="Sign out"><LogOut className="size-4" /></button>
           </div>

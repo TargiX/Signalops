@@ -21,7 +21,7 @@ type IncidentHandoffInput = {
   canonicalUrl: string;
 };
 
-const SIGNALOPS_ORIGIN = "https://signalops.ilyamoskovkin.com";
+const SIGNALOPS_ORIGIN = "https://signalops.cc";
 
 export function buildCanonicalIncidentUrl(incidentId: string) {
   return new URL(

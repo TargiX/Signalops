@@ -50,6 +50,11 @@ workspace password, session secret, and ingest token before testing live mode.
 ## Live product boundaries
 
 - `/cockpit` is the authenticated live tenant view.
+- `/onboarding` creates a Supabase-backed account, isolated workspace, and one-time managed ingest
+  credential when public signup is enabled.
+- `/settings` lets workspace owners create, rotate, and revoke digest-only ingest credentials.
+- `/docs`, `/pricing`, `/security`, `/privacy`, `/terms`, `/contact`, and `/status` are public
+  product routes with no synthetic customer or certification claims.
 - `/cockpit?mode=demo` is the synthetic routing/incident demonstration.
 - `POST /v1/events` accepts canonical AI telemetry using a tenant Bearer credential.
 - `POST /v1/events/validate` validates the same contract without storing it.
@@ -63,7 +68,8 @@ workspace password, session secret, and ingest token before testing live mode.
 - `/schemas/ai-telemetry/v1` publishes the exact JSON Schema named by canonical events.
 - `/schemas/ai-telemetry/v1/ingest-response` publishes the closed success-envelope schema used by
   producers to reconcile stored, duplicate, conflicting, and rejected event IDs.
-- `/api/readiness` reports storage, operator-auth, and ingest-auth configuration without secrets.
+- `/api/readiness` reports storage, operator-auth, ingest-auth, self-serve, lead-delivery, and
+  incident-delivery configuration without secrets.
 
 Phosphene is the first tenant, not a special schema. SignalOps receives opaque operation/attempt
 facts and never receives prompts, media URLs, emails, user IDs, access tokens, or raw provider
@@ -75,12 +81,15 @@ a Supabase backend is configured (or local storage is explicitly opted into). Th
 Supabase migration enables RLS and revokes `anon`/`authenticated` table access; secret/service-role
 credentials stay server-only.
 
-Hosted operators sign in through a pre-provisioned Supabase account using an email magic link or an
-allowlisted OAuth provider. Authentication alone grants no access: every request revalidates an
-active `signalops_v1_operator_memberships` row, and the cockpit can switch only among those tenant
-memberships. New users and ingest credentials are created explicitly with the admin workflow in
-[`docs/runbooks/signalops-operations.md`](docs/runbooks/signalops-operations.md); public self-signup
-is disabled.
+Hosted operators sign in through Supabase using an email magic link or an allowlisted OAuth
+provider. Authentication alone grants no tenant access: every request revalidates an active
+`signalops_v1_operator_memberships` row, and the cockpit can switch only among those memberships.
+Production self-serve is explicit: set `SIGNALOPS_PUBLIC_SIGNUP=true` only after Supabase Auth,
+server-only storage credentials, the self-serve migration, rate limiting, and the public origin are
+configured. Workspace provisioning is idempotent per authenticated subject, creates the first owner
+membership and default SLOs atomically, and returns managed ingest secrets exactly once. Private
+installations can leave the flag disabled and keep using the admin workflow in
+[`docs/runbooks/signalops-operations.md`](docs/runbooks/signalops-operations.md).
 
 Accepted ingest schedules incident evaluation immediately after the durable receipt is returned.
 The authenticated daily job at `/api/internal/evaluate` also closes stale incidents and applies the
@@ -113,6 +122,21 @@ The workspace also contains two client-facing packages:
   semantic validator, and fixtures.
 - [`@signalops/producer-node`](packages/producer-node) — lifecycle recorder, bounded HTTP transport,
   memory transport, privacy normalization, dead-letter seam, and executable conformance runner.
+
+Both packages build and pack into reproducible public tarballs, and pnpm rewrites the producer's
+workspace dependency to `@signalops/contracts@^1.0.0`. They are not yet published to npm. Registry
+publication remains a separate release action and is blocked on choosing and committing an explicit
+open-source license; raw HTTP onboarding works without either package.
+
+## Public-beta growth and analytics
+
+The privacy-safe activation definition is: `signup_completed` → `workspace_created` →
+`ingest_key_created` → `first_production_event_accepted` within seven days. The live PostHog project
+contains a pinned **Public Beta Activation** dashboard with that server-truth funnel plus acquisition,
+activation-volume, and operator-adoption trends. Authenticated behavior uses opaque Supabase subject
+identity and a workspace group; email, prompts, media, tokens, raw operation IDs, and free-form text
+are excluded. The acquisition and weekly operating cadence is documented in
+[`docs/growth/public-beta-go-to-market.md`](docs/growth/public-beta-go-to-market.md).
 
 ## Demo script
 

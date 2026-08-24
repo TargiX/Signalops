@@ -46,11 +46,20 @@ const migrations = await Promise.all([
     ),
     "utf8",
   ),
+  readFile(
+    new URL(
+      "../supabase/migrations/20260824050000_signalops_v1_self_serve.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
 ]);
 
 const { Client } = pg;
 const client = new Client({ connectionString, connectionTimeoutMillis: 5_000 });
 const tenantId = `sql-test-${randomUUID()}`;
+const selfServeTenantId = `self-serve-${randomUUID()}`;
+const selfServeSubject = `sql:test:${randomUUID()}`;
 const bucketKey = randomUUID().replaceAll("-", "").padEnd(64, "0");
 
 async function ensureRole(name, bypassRls = false) {
@@ -72,7 +81,7 @@ try {
   const tables = await client.query(
     "select count(*)::integer as count from information_schema.tables where table_schema = 'public' and table_name like 'signalops_v1_%'",
   );
-  assert.equal(tables.rows[0].count, 13);
+  assert.equal(tables.rows[0].count, 14);
 
   const subjectColumn = await client.query(
     `select is_nullable
@@ -112,7 +121,22 @@ try {
         'service_role',
         'public.signalops_v1_apply_retention(timestamptz,timestamptz,timestamptz,timestamptz)',
         'execute'
-      ) as service_retention`,
+      ) as service_retention,
+      has_table_privilege(
+        'authenticated',
+        'public.signalops_v1_product_milestones',
+        'select'
+      ) as user_milestones,
+      has_function_privilege(
+        'service_role',
+        'public.signalops_v1_provision_workspace(text,text,text,text)',
+        'execute'
+      ) as service_workspace_provision,
+      has_function_privilege(
+        'authenticated',
+        'public.signalops_v1_provision_workspace(text,text,text,text)',
+        'execute'
+      ) as user_workspace_provision`,
   );
   assert.deepEqual(privileges.rows[0], {
     anon_events: false,
@@ -123,6 +147,9 @@ try {
     service_incident_transition: true,
     user_incident_transition: false,
     service_retention: true,
+    user_milestones: false,
+    service_workspace_provision: true,
+    user_workspace_provision: false,
   });
 
   const rowSecurity = await client.query(
@@ -130,12 +157,14 @@ try {
      from pg_class
      where oid in (
        'public.signalops_v1_slo_policies'::regclass,
-       'public.signalops_v1_incident_transitions'::regclass
+       'public.signalops_v1_incident_transitions'::regclass,
+       'public.signalops_v1_product_milestones'::regclass
      )
      order by relname`,
   );
   assert.deepEqual(rowSecurity.rows, [
     { relname: "signalops_v1_incident_transitions", relrowsecurity: true },
+    { relname: "signalops_v1_product_milestones", relrowsecurity: true },
     { relname: "signalops_v1_slo_policies", relrowsecurity: true },
   ]);
 
@@ -162,6 +191,74 @@ try {
 
   await client.query("set role service_role");
   try {
+    const provisioned = await client.query(
+      "select * from public.signalops_v1_provision_workspace($1, 'Self Serve SQL', $2, 'req_sqlprovision1')",
+      [selfServeTenantId, selfServeSubject],
+    );
+    assert.deepEqual(provisioned.rows, [{
+      tenant_id: selfServeTenantId,
+      tenant_name: "Self Serve SQL",
+      role: "owner",
+      created: true,
+    }]);
+    const reprovisioned = await client.query(
+      "select * from public.signalops_v1_provision_workspace($1, 'Ignored Retry', $2, 'req_sqlprovision2')",
+      [`retry-${randomUUID()}`, selfServeSubject],
+    );
+    assert.deepEqual(reprovisioned.rows, [{
+      tenant_id: selfServeTenantId,
+      tenant_name: "Self Serve SQL",
+      role: "owner",
+      created: false,
+    }]);
+    const defaultPolicies = await client.query(
+      "select count(*)::integer as count from public.signalops_v1_slo_policies where tenant_id = $1",
+      [selfServeTenantId],
+    );
+    assert.equal(defaultPolicies.rows[0].count, 5);
+
+    const issued = await client.query(
+      `select * from public.signalops_v1_create_ingest_credential(
+        $1, $2, 'Production SQL', 'sop_live_sqltest', $3,
+        array['events:validate','events:write']::text[], now() + interval '90 days', null, 'req_sqlcredential1'
+      )`,
+      [selfServeTenantId, selfServeSubject, "d".repeat(64)],
+    );
+    assert.equal(issued.rowCount, 1);
+    const sourceCredentialId = issued.rows[0].id;
+    assert.deepEqual(issued.rows[0].scopes, ["events:validate", "events:write"]);
+
+    const milestoneFirst = await client.query(
+      "select public.signalops_v1_claim_product_milestone($1, 'first_production_event_accepted', '{\"credential_type\":\"managed\"}'::jsonb) as claimed",
+      [selfServeTenantId],
+    );
+    const milestoneDuplicate = await client.query(
+      "select public.signalops_v1_claim_product_milestone($1, 'first_production_event_accepted', '{}'::jsonb) as claimed",
+      [selfServeTenantId],
+    );
+    assert.equal(milestoneFirst.rows[0].claimed, true);
+    assert.equal(milestoneDuplicate.rows[0].claimed, false);
+
+    const rotated = await client.query(
+      `select * from public.signalops_v1_rotate_ingest_credential(
+        $1, $2, $3, 'Production SQL rotated', 'sop_live_sqlnext', $4,
+        array['events:validate','events:write']::text[], now() + interval '90 days', 'req_sqlrotation1'
+      )`,
+      [selfServeTenantId, selfServeSubject, sourceCredentialId, "e".repeat(64)],
+    );
+    assert.equal(rotated.rowCount, 1);
+    assert.equal(rotated.rows[0].rotated_from_id, sourceCredentialId);
+    const sourceState = await client.query(
+      "select revoked_at is not null as revoked from public.signalops_v1_ingest_credentials where id = $1",
+      [sourceCredentialId],
+    );
+    assert.equal(sourceState.rows[0].revoked, true);
+    const revokedReplacement = await client.query(
+      "select * from public.signalops_v1_revoke_ingest_credential($1, $2, $3, 'req_sqlrevoke1')",
+      [selfServeTenantId, selfServeSubject, rotated.rows[0].id],
+    );
+    assert.equal(revokedReplacement.rowCount, 1);
+
     const updated = await client.query(
       "update public.signalops_v1_tenants set name = 'SQL Test Updated' where id = $1",
       [tenantId],
@@ -281,6 +378,7 @@ try {
     );
     if (cleanupTargets.rows[0].tenants) {
       await client.query("delete from public.signalops_v1_tenants where id = $1", [tenantId]);
+      await client.query("delete from public.signalops_v1_tenants where id = $1", [selfServeTenantId]);
     }
     if (cleanupTargets.rows[0].rate_limits) {
       await client.query(

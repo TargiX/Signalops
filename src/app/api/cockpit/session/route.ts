@@ -31,6 +31,7 @@ import {
   isSignalOpsSupabaseAuthConfiguredV1,
   signalOpsAllowedAuthProvidersV1,
 } from "@/lib/signalops/v1/supabase-auth";
+import { isSignalOpsPublicSignupEnabledV1 } from "@/lib/signalops/v1/workspace-provisioning";
 
 export const runtime = "nodejs";
 
@@ -54,6 +55,7 @@ export async function GET(request: Request) {
         supabase: isSignalOpsSupabaseAuthConfiguredV1(),
         emailOtp: isSignalOpsEmailOtpEnabledV1(),
         providers: signalOpsAllowedAuthProvidersV1(),
+        publicSignup: isSignalOpsPublicSignupEnabledV1(),
       },
       session,
       memberships,

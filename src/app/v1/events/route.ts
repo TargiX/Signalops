@@ -1,10 +1,13 @@
 import { after, NextResponse } from "next/server";
 
+import { captureServerProductEvent } from "@/lib/posthog-server";
 import { writeSignalOpsAuditEventV1 } from "@/lib/signalops/v1/audit";
 import { resolveSignalOpsTenantPrincipalV1 } from "@/lib/signalops/v1/auth";
+import { normalizeSignalOpsEventBatchV1 } from "@/lib/signalops/v1/contract";
 import { evaluateSignalOpsTenantV1 } from "@/lib/signalops/v1/evaluator";
 import { SignalOpsHttpErrorV1, readSignalOpsJsonBodyV1 } from "@/lib/signalops/v1/http";
 import { ingestSignalOpsEventsV1 } from "@/lib/signalops/v1/ingest";
+import { resolveSignalOpsWorkspaceOwnerSubjectV1 } from "@/lib/signalops/v1/operator-directory";
 import { getSignalOpsRuntimeStoreV1 } from "@/lib/signalops/v1/runtime";
 import {
   enforceSignalOpsRateLimitV1,
@@ -12,6 +15,7 @@ import {
   SignalOpsRateLimitErrorV1,
   signalOpsRequestFingerprintV1,
 } from "@/lib/signalops/v1/rate-limit";
+import { claimSignalOpsProductMilestoneV1 } from "@/lib/signalops/v1/workspace-provisioning";
 
 export const runtime = "nodejs";
 
@@ -50,11 +54,17 @@ export async function POST(request: Request) {
       limit: Number(process.env.SIGNALOPS_INGEST_RATE_LIMIT_MAX ?? 600),
       windowSeconds: Number(process.env.SIGNALOPS_INGEST_RATE_LIMIT_WINDOW_SECONDS ?? 60),
     });
+    const payload = await readSignalOpsJsonBodyV1(request);
+    const normalized = normalizeSignalOpsEventBatchV1(payload);
     const receipt = await ingestSignalOpsEventsV1({
       principal,
-      payload: await readSignalOpsJsonBodyV1(request),
+      payload,
       store: getSignalOpsRuntimeStoreV1(),
     });
+    const storedIds = new Set(receipt.storedEventIds);
+    const storedProductionEvents = normalized.events.filter(
+      (event) => storedIds.has(event.id) && event.data.resource.environment === "production",
+    );
     if (receipt.conflictEvents > 0) {
       void writeSignalOpsAuditEventV1({
         tenantId: principal.tenantId,
@@ -66,6 +76,42 @@ export async function POST(request: Request) {
     }
     if (receipt.storedEvents > 0 || receipt.conflictEvents > 0) {
       after(async () => {
+        if (storedProductionEvents.length > 0) {
+          try {
+            const credentialType =
+              principal.credentialId === "bootstrap-environment-credential"
+                ? "bootstrap"
+                : "managed";
+            const first = await claimSignalOpsProductMilestoneV1({
+              tenantId: principal.tenantId,
+              milestone: "first_production_event_accepted",
+              metadata: {
+                event_count: storedProductionEvents.length,
+                credential_type: credentialType,
+              },
+            });
+            if (first) {
+              const ownerSubject = await resolveSignalOpsWorkspaceOwnerSubjectV1(
+                principal.tenantId,
+              ).catch(() => null);
+              await captureServerProductEvent({
+                distinctId: ownerSubject ?? `workspace:${principal.tenantId}`,
+                event: "first_production_event_accepted",
+                properties: {
+                  event_count: storedProductionEvents.length,
+                  credential_type: credentialType,
+                },
+                groups: { workspace: principal.tenantId },
+              });
+            }
+          } catch (error) {
+            console.error("[SignalOps] activation milestone claim failed", {
+              requestId,
+              tenantId: principal.tenantId,
+              error,
+            });
+          }
+        }
         try {
           await evaluateSignalOpsTenantV1({
             tenantId: principal.tenantId,
