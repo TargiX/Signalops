@@ -37,7 +37,9 @@ export function ContactForm({ fallbackEmail }: { fallbackEmail?: string }) {
           response.status === 429
             ? "Too many requests were submitted from this network. Try again later."
             : body.code === "pilot_delivery_not_configured"
-              ? "The request channel is temporarily unavailable. Use the direct email below."
+              ? fallbackEmail
+                ? "The request channel is temporarily unavailable. Use the direct email below."
+                : "The request channel is temporarily unavailable and your message was not delivered. Please try again later."
               : body.message ?? "The request could not be delivered.",
         );
         return;
@@ -48,7 +50,11 @@ export function ContactForm({ fallbackEmail }: { fallbackEmail?: string }) {
       });
       setSent(true);
     } catch {
-      setError("SignalOps could not be reached. Try again or use the direct email below.");
+      setError(
+        fallbackEmail
+          ? "SignalOps could not be reached. Try again or use the direct email below."
+          : "SignalOps could not be reached. Please try again.",
+      );
     } finally {
       setBusy(false);
     }
