@@ -230,10 +230,26 @@ assert.match(
   /exitReplay\("none"\)/,
   "Expected popstate exit restoration to avoid recursive history writes.",
 );
+const onExitInvocations = incidentReplaySource.match(/\bonExit\(\)/g) ?? [];
 assert.equal(
-  (incidentReplaySource.match(/onClick=\{\(\) => onExit\(\)\}/g) ?? []).length,
+  onExitInvocations.length,
   2,
   "Exit replay and Finish replay must invoke onExit without forwarding the click event as a history mode.",
+);
+assert.match(
+  incidentReplaySource,
+  /onClick=\{\(\) => onExit\(\)\}[\s\S]*?Exit replay/,
+  "The Exit replay button handler must invoke onExit exactly once.",
+);
+assert.match(
+  incidentReplaySource,
+  /captureProductEvent\("incident_replay_completed", \{[\s\S]*?\}\);[\s\S]*?onExit\(\);/,
+  "The Finish replay handler must invoke onExit after the completion event.",
+);
+assert.equal(
+  (incidentReplaySource.match(/onClick=\{onExit\}/g) ?? []).length,
+  0,
+  "onExit handlers must be wrapped so the click event is never forwarded as a history mode.",
 );
 assert.match(
   dashboardSource,
