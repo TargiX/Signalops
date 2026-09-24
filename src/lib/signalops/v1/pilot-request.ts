@@ -1,5 +1,7 @@
 import { createHmac } from "node:crypto";
 
+import { sendSignalOpsEmailV1 } from "./email-transport.ts";
+
 export type SignalOpsPilotRequestV1 = {
   email: string;
   company: string;
@@ -125,27 +127,17 @@ async function deliverEmail(
   request: SignalOpsPilotRequestV1,
   requestId: string,
 ): Promise<boolean> {
-  const apiKey = process.env.SIGNALOPS_RESEND_API_KEY?.trim();
   const to = process.env.SIGNALOPS_PILOT_REQUEST_EMAIL_TO?.trim();
   const from = process.env.SIGNALOPS_PILOT_REQUEST_EMAIL_FROM?.trim();
-  if (!apiKey || !to || !from) return false;
-  const response = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${apiKey}`,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
-      from,
-      to: [to],
-      reply_to: request.email,
-      subject: `[SignalOps beta] ${request.company} · ${request.category}`,
-      text: pilotRequestText(request, requestId),
-    }),
-    signal: AbortSignal.timeout(8_000),
+  if (!to || !from) return false;
+  return sendSignalOpsEmailV1({
+    from,
+    to,
+    replyTo: request.email,
+    subject: `[SignalOps beta] ${request.company} · ${request.category}`,
+    text: pilotRequestText(request, requestId),
+    idempotencyKey: requestId,
   });
-  if (!response.ok) throw new Error(`Pilot request email rejected delivery (${response.status})`);
-  return true;
 }
 
 export async function deliverSignalOpsPilotRequestV1(

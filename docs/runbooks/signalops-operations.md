@@ -117,6 +117,32 @@ node scripts/signalops-admin.mjs membership list \
 SignalOps does not store the invite email in its tenant tables or audit metadata. Email delivery,
 redirect allowlists, OAuth providers, and SMTP configuration must already be verified in Supabase.
 
+## Email transport
+
+SignalOps sends two kinds of mail, through two independent paths:
+
+- **Pilot-request notifications** (fallback when the pilot webhook is absent or fails) go through
+  `src/lib/signalops/v1/email-transport.ts`. `SIGNALOPS_EMAIL_TRANSPORT` selects `resend`
+  (default) or `smtp`.
+- **Operator sign-in codes** are sent by Supabase Auth. Changing them means changing the Supabase
+  project's custom SMTP settings, not application code. Move them only after the pilot-request
+  path has delivered reliably.
+
+SMTP uses a dedicated `signalops.cc` identity on the self-hosted mail server described in
+`TargiX/apps-infrastructure` (`docs/resend-migration.md`). Never reuse another project's mailbox
+password or sender domain. Port 465 is implicit TLS; any other port must negotiate STARTTLS or the
+send fails before credentials are transmitted. Certificates are always verified.
+
+There is no automatic fallback between transports: an SMTP timeout is ambiguous because the server
+may already have accepted the message. Rollback is an explicit change of `SIGNALOPS_EMAIL_TRANSPORT`
+back to `resend` with a valid Resend key. The SMTP Message-ID is derived from the request ID, so a
+manual retry of the same request is recognizable to the recipient.
+
+Before enabling `smtp` in production, publish SPF with the mail server IP, the `mail` DKIM selector,
+and a DMARC record for `signalops.cc`. Then send one owner-authorized test message to an external
+inbox. It must show SPF, DKIM, and DMARC PASS. `/api/readiness` reports `pilotRequests: true` only
+when the recipient, sender, and selected transport are all configured.
+
 ## Create an ingest credential
 
 Choose an explicit expiry, or consciously opt into a non-expiring credential with `--no-expiry`.
