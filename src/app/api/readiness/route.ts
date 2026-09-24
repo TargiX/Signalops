@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { isSignalOpsEmailTransportConfiguredV1 } from "@/lib/signalops/v1/email-transport";
 import { isSignalOpsCronAuthConfiguredV1 } from "@/lib/signalops/v1/internal-auth";
 import { isSignalOpsRateLimitingConfiguredV1 } from "@/lib/signalops/v1/rate-limit";
 import { isSignalOpsRetentionConfiguredV1 } from "@/lib/signalops/v1/retention";
@@ -101,7 +102,7 @@ export async function GET() {
       (process.env.SIGNALOPS_PILOT_REQUEST_WEBHOOK_SECRET?.trim().length ?? 0) >= 32) ||
       (process.env.SIGNALOPS_PILOT_REQUEST_EMAIL_TO?.trim() &&
         process.env.SIGNALOPS_PILOT_REQUEST_EMAIL_FROM?.trim() &&
-        process.env.SIGNALOPS_RESEND_API_KEY?.trim()),
+        isSignalOpsEmailTransportConfiguredV1()),
   );
   let storageReachable = false;
   if (storage !== "unavailable") {
