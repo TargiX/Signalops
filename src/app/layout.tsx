@@ -14,21 +14,21 @@ const jetBrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://signalops.ilyamoskovkin.com"),
+  metadataBase: new URL("https://signalops.cc"),
   title: "SignalOps — AI Generation Operations",
   description:
-    "A dense React operations cockpit for AI image-generation products.",
+    "A hosted demo and early ingest API for AI generation operations.",
   openGraph: {
     title: "SignalOps — AI Generation Operations",
     description:
-      "Custom React dashboard with TanStack Table, Virtual, Query, incident triage, and routing-rule simulation.",
+      "Custom React dashboard with an early event ingest API, incident triage, and routing-rule simulation.",
     images: [{ url: "/opengraph-image" }],
   },
   twitter: {
     card: "summary_large_image",
     title: "SignalOps — AI Generation Operations",
     description:
-      "Custom React dashboard with TanStack Table, Virtual, Query, incident triage, and routing-rule simulation.",
+      "Custom React dashboard with an early event ingest API, incident triage, and routing-rule simulation.",
     images: ["/opengraph-image"],
   },
 };

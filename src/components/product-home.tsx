@@ -26,7 +26,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { getOpsSnapshot } from "@/lib/mock-data";
 import { cn, formatCurrency, formatMs, formatNumber } from "@/lib/utils";
 
-const navItems = ["Product", "Solutions", "Resources", "Pricing", "Docs"];
+const navItems = ["Product", "Cockpit", "Docs", "Pilot", "Setup", "Status"];
 
 const providers: Array<{
   name: string;
@@ -116,7 +116,7 @@ export function ProductHome() {
               variants={itemVariants}
               className="mb-4 font-mono text-[11px] font-bold uppercase leading-none text-[var(--accent)]"
             >
-              Agentic AI Infrastructure
+              AI Generation Operations
             </motion.p>
             <motion.h1
               variants={itemVariants}
@@ -127,7 +127,7 @@ export function ProductHome() {
               becomes damage.
             </motion.h1>
             <motion.p variants={itemVariants} className="mt-6 max-w-[420px] text-[15px] leading-7 text-[var(--text-dim)]">
-              SignalOps OS turns latency tails, retries, cost leakage, and provider incidents into one repeatable workflow. Detect, triage, and simulate routing rules in real time.
+              SignalOps turns latency tails, retries, cost leakage, and provider incidents into one repeatable workflow. Validate the event contract now, then connect durable source traffic during pilot setup.
             </motion.p>
             <motion.div variants={itemVariants} className="mt-8 flex flex-wrap items-center gap-4">
               <Link
@@ -154,13 +154,12 @@ export function ProductHome() {
               </Link>
             </motion.div>
             <motion.div variants={itemVariants} className="mt-14">
-              <p className="font-mono text-[10px] font-bold uppercase text-[var(--mute)]">Trusted by leading AI teams</p>
-              <div className="mt-5 flex flex-wrap items-center gap-x-7 gap-y-3 text-[12px] font-semibold text-[#8c97ad]">
-                <span>LUMEN</span>
-                <span>▲ Vercel</span>
-                <span>◇ CURSOR</span>
-                <span>perplexity</span>
-                <span>syntheisa</span>
+              <p className="font-mono text-[10px] font-bold uppercase text-[var(--mute)]">Current product stage</p>
+              <div className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-3 text-[12px] font-semibold text-[#66738d]">
+                <span>Hosted demo</span>
+                <span>Real ingest API</span>
+                <span>D1/Supabase path ready</span>
+                <span>Source evidence gated</span>
               </div>
             </motion.div>
           </div>
@@ -180,8 +179,8 @@ export function ProductHome() {
             <section className="rounded-lg border border-[var(--border)] bg-white/90 p-6 shadow-[var(--shadow-panel)]">
               <div className="mb-6 flex items-start justify-between gap-4">
                 <div>
-                  <p className="font-mono text-[10px] font-bold uppercase text-[var(--mute)]">Live Snapshot</p>
-                  <h2 className="mt-2 text-xl font-bold text-[var(--text-strong)]">Current operating picture</h2>
+                  <p className="font-mono text-[10px] font-bold uppercase text-[var(--mute)]">Demo Snapshot</p>
+                  <h2 className="mt-2 text-xl font-bold text-[var(--text-strong)]">Seeded operating picture</h2>
                 </div>
                 <QuietStatus />
               </div>
@@ -275,10 +274,10 @@ export function ProductHome() {
             className="relative grid min-h-[280px] overflow-hidden rounded-lg border border-[#cfe0f6] bg-[linear-gradient(110deg,#dcebff_0%,#f8fbff_47%,#d9f6ec_100%)] p-9 shadow-[0_24px_70px_rgba(74,104,163,0.14)] lg:grid-cols-[0.86fr_1.14fr]"
           >
             <div className="relative z-10">
-              <p className="font-mono text-[10px] font-bold uppercase text-[var(--accent)]">Regain Control</p>
-              <h2 className="mt-4 text-3xl font-extrabold text-[var(--text-strong)]">Ready to regain control?</h2>
+              <p className="font-mono text-[10px] font-bold uppercase text-[var(--accent)]">Pilot path</p>
+              <h2 className="mt-4 text-3xl font-extrabold text-[var(--text-strong)]">Validate the signal loop</h2>
               <p className="mt-4 max-w-[390px] text-[14px] leading-6 text-[var(--text-dim)]">
-                Stop guessing why jobs fail and start operating your AI generation stack with confidence and precision.
+                Dry-run an event payload, inspect the seeded cockpit, and request a scoped pilot once durable intake is connected.
               </p>
               <div className="mt-7 flex flex-wrap gap-4">
                 <Link
@@ -292,13 +291,13 @@ export function ProductHome() {
                   <ArrowRight className="ml-2 size-4" />
                 </Link>
                 <Link
-                  href="/cockpit"
+                  href="/pilot"
                   className={cn(
                     buttonVariants({ variant: "outline", size: "lg" }),
                     "h-11 rounded-lg border-[var(--border)] bg-white/72 px-5 text-[13px] font-semibold text-[var(--text)] hover:bg-white",
                   )}
                 >
-                  Book a demo
+                  Request pilot
                 </Link>
               </div>
             </div>
@@ -319,31 +318,47 @@ function Header() {
         <span className="grid size-7 place-items-center text-[var(--accent)]">
           <SignalGlyph className="size-6" />
         </span>
-        <span className="text-lg font-bold text-[var(--accent)]">SignalOps OS</span>
-        <span className="text-xs font-semibold text-[var(--mute)]">v2.0</span>
+        <span className="text-lg font-bold text-[var(--accent)]">SignalOps</span>
+        <span className="text-xs font-semibold text-[var(--mute)]">pilot preview</span>
       </Link>
       <nav className="hidden items-center gap-9 text-[12px] font-semibold text-[var(--text-dim)] lg:flex">
         {navItems.map((item) => (
-          <Link key={item} href="/cockpit" className="hover:text-[var(--text)]">
+          <Link
+            key={item}
+            href={
+              item === "Cockpit"
+                ? "/cockpit"
+                : item === "Docs"
+                  ? "/docs"
+                  : item === "Pilot"
+                    ? "/pilot"
+                    : item === "Setup"
+                      ? "/setup"
+                      : item === "Status"
+                        ? "/status"
+                        : "/"
+            }
+            className="hover:text-[var(--text)]"
+          >
             {item}
           </Link>
         ))}
       </nav>
       <div className="flex items-center gap-3">
         <Link
-          href="/cockpit"
+          href="/docs"
           className="hidden h-9 items-center rounded-lg border border-[var(--border)] bg-white/90 px-4 text-[12px] font-semibold text-[var(--text-dim)] shadow-sm hover:bg-white sm:inline-flex"
         >
-          Log in
+          Docs
         </Link>
         <Link
-          href="/cockpit"
+          href="/pilot"
           className={cn(
             buttonVariants({ size: "sm" }),
             "h-9 rounded-lg bg-[var(--accent)] px-4 text-[12px] font-semibold text-white shadow-[0_12px_24px_rgba(42,80,214,0.18)] hover:bg-[var(--accent-hover)]",
           )}
         >
-          Book a demo
+          Request pilot
           <ArrowRight className="ml-2 size-4" />
         </Link>
       </div>
@@ -358,7 +373,7 @@ function SignalCartography() {
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_50%,rgba(74,109,240,0.12),transparent_24%),radial-gradient(circle_at_50%_50%,transparent_0_25%,rgba(93,126,225,0.08)_25.3%,transparent_25.8%,transparent_37%,rgba(93,126,225,0.07)_37.3%,transparent_37.8%,transparent_49%,rgba(93,126,225,0.06)_49.3%,transparent_49.8%)]" />
         <div className="absolute inset-0 opacity-30 [background-image:radial-gradient(#7fa0ff_1px,transparent_1.2px)] [background-size:18px_18px]" />
         <div className="absolute left-5 top-5 z-10 flex items-center gap-4">
-          <p className="font-mono text-[11px] font-bold uppercase text-[var(--text-dim)]">Live Signal Cartography</p>
+          <p className="font-mono text-[11px] font-bold uppercase text-[var(--text-dim)]">Demo Signal Map</p>
         </div>
         <div className="absolute right-3 top-16 z-20 grid gap-3">
           {[Zap, Layers, Lock, Box].map((Icon, index) => (
@@ -659,20 +674,35 @@ function Footer() {
     <footer className="flex flex-wrap items-center justify-between gap-5 py-6">
       <Link href="/" className="flex items-center gap-3">
         <SignalGlyph className="size-6 text-[var(--accent)]" />
-        <span className="text-[15px] font-bold text-[var(--accent)]">SignalOps OS</span>
-        <span className="text-[11px] font-semibold text-[var(--mute)]">v2.0</span>
+        <span className="text-[15px] font-bold text-[var(--accent)]">SignalOps</span>
+        <span className="text-[11px] font-semibold text-[var(--mute)]">pilot preview</span>
       </Link>
       <nav className="hidden gap-12 text-[11px] font-semibold text-[var(--mute)] md:flex">
         {navItems.map((item) => (
-          <Link key={item} href="/cockpit">
+          <Link
+            key={item}
+            href={
+              item === "Cockpit"
+                ? "/cockpit"
+                : item === "Docs"
+                  ? "/docs"
+                  : item === "Pilot"
+                    ? "/pilot"
+                    : item === "Setup"
+                      ? "/setup"
+                      : item === "Status"
+                        ? "/status"
+                        : "/"
+            }
+          >
             {item}
           </Link>
         ))}
       </nav>
       <div className="flex gap-6 text-[11px] font-semibold text-[var(--mute)]">
-        <span>SOC 2</span>
-        <span>GDPR</span>
-        <span>99.9% SLA</span>
+        <span>Hosted demo</span>
+        <span>D1 or Supabase path</span>
+        <span>Redacted ingest</span>
       </div>
     </footer>
   );

@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
   AlertTriangle,
+  ArrowLeft,
   ArrowUpRight,
   CheckCircle2,
   CircleDollarSign,
@@ -754,6 +755,15 @@ export function Dashboard() {
           className="flex min-w-0 scroll-mt-4 flex-col gap-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[var(--shadow-1)] lg:flex-row lg:items-center lg:justify-between"
         >
           <div className="flex min-w-0 items-center gap-4">
+            <Link
+              href="/"
+              aria-label="Back to SignalOps home"
+              title="Back to SignalOps home"
+              className="group inline-flex size-11 shrink-0 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] shadow-[var(--shadow-1)] transition-all hover:-translate-y-0.5 hover:border-[var(--accent)] hover:bg-[var(--surface-mute)] hover:text-[var(--accent)] hover:shadow-[var(--shadow-2)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--background)] sm:w-auto sm:px-3"
+            >
+              <ArrowLeft className="size-4 transition-transform group-hover:-translate-x-0.5" />
+              <span className="hidden text-[13px] font-semibold sm:inline">Home</span>
+            </Link>
             <div className="grid size-11 shrink-0 place-items-center rounded-lg bg-[var(--accent-soft)] text-[var(--accent)]">
               <Activity className="size-5" />
             </div>
@@ -817,6 +827,32 @@ export function Dashboard() {
             </motion.button>
           </div>
         </header>
+
+        {data.sourceOverlay.sourceEventsIncluded ? (
+          <section className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[var(--shadow-1)]">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="font-mono text-[11px] font-bold uppercase text-[var(--accent)]">
+                  {data.sourceOverlay.durableSourceStorage ? "Durable source overlay" : "Local source overlay"}
+                </p>
+                <p className="mt-1 text-sm leading-6 text-[var(--text-dim)]">
+                  {data.sourceOverlay.sourceGenerationCount} generation row
+                  {data.sourceOverlay.sourceGenerationCount === 1 ? "" : "s"} from{" "}
+                  {data.sourceOverlay.sourceEventCount} stored source event
+                  {data.sourceOverlay.sourceEventCount === 1 ? "" : "s"} are layered over the demo cockpit. The
+                  source-only report stays separate for pilot evidence.
+                </p>
+              </div>
+              <Link
+                href={data.sourceOverlay.sourceOnlyReportPath}
+                className="inline-flex items-center gap-2 text-sm font-semibold text-[var(--accent)]"
+              >
+                Source-only report
+                <ArrowUpRight className="size-4" />
+              </Link>
+            </div>
+          </section>
+        ) : null}
 
         <IncidentReplay
           scenarios={replayScenarios}

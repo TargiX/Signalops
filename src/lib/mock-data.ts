@@ -1,4 +1,4 @@
-export type ProviderId = "google" | "fal" | "openai" | "alibaba";
+export type ProviderId = string;
 export type GenerationStatus =
   | "succeeded"
   | "failed"
@@ -11,7 +11,9 @@ export type GenerationSource =
   | "template"
   | "photo-me"
   | "upscale"
-  | "inpaint";
+  | "inpaint"
+  | "api"
+  | string;
 
 export type Provider = {
   id: ProviderId;
@@ -96,6 +98,16 @@ export type Consumer = {
 
 export type OpsSnapshot = {
   generatedAt: string;
+  sourceOverlay: {
+    demoDataIncluded: true;
+    sourceEventsIncluded: boolean;
+    durableSourceStorage: boolean;
+    sourceEventCount: number;
+    sourceGenerationCount: number;
+    sourceProviders: string[];
+    sourceModels: string[];
+    sourceOnlyReportPath: string;
+  };
   providers: Provider[];
   models: Model[];
   generations: Generation[];
@@ -423,6 +435,16 @@ export function getOpsSnapshot(range: "24h" | "7d" | "30d") {
 
   return {
     generatedAt: new Date().toISOString(),
+    sourceOverlay: {
+      demoDataIncluded: true,
+      sourceEventsIncluded: false,
+      durableSourceStorage: false,
+      sourceEventCount: 0,
+      sourceGenerationCount: 0,
+      sourceProviders: [],
+      sourceModels: [],
+      sourceOnlyReportPath: "/source-report",
+    },
     providers: providers.map((provider) => ({
       ...provider,
       spend: Number((provider.spend * multiplier).toFixed(2)),
@@ -446,7 +468,15 @@ export function getOpsSnapshot(range: "24h" | "7d" | "30d") {
 }
 
 export async function fetchOpsSnapshot(range: "24h" | "7d" | "30d") {
-  await new Promise((resolve) => setTimeout(resolve, 360));
+  if (typeof window !== "undefined") {
+    const response = await fetch(`/api/snapshot?range=${range}`, {
+      headers: { accept: "application/json" },
+    });
+
+    if (response.ok) {
+      return (await response.json()) as OpsSnapshot;
+    }
+  }
 
   return getOpsSnapshot(range);
 }

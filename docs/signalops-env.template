@@ -1,0 +1,72 @@
+# SignalOps production env template
+#
+# This file is safe to commit: it documents required variables without storing
+# live secrets. Set these values in the existing Vercel project; do not create a
+# new Vercel project or new cloud database from this template.
+
+# Public/canonical URLs
+SIGNALOPS_PUBLIC_BASE_URL=https://signalops.cc
+SIGNALOPS_BASE_URL=https://signalops.cc
+# Use a real tenant/workspace slug for pilot evidence; "demo" is intentionally not pilot-ready.
+SIGNALOPS_WORKSPACE_SLUG=signalops-pilot
+
+# Operator access
+# Pilot-ready operator access requires either SIGNALOPS_OPERATOR_TOKEN or
+# SIGNALOPS_REQUIRE_AUTH=true with both SIGNALOPS_COCKPIT_PASSWORD and
+# SIGNALOPS_SESSION_SECRET.
+SIGNALOPS_REQUIRE_AUTH=true
+SIGNALOPS_COCKPIT_PASSWORD=
+SIGNALOPS_SESSION_SECRET=
+SIGNALOPS_SESSION_TTL_SECONDS=28800
+SIGNALOPS_OPERATOR_TOKEN=
+
+# Source ingest
+# Keep ingest, operator, cockpit, and session secrets distinct. The cutover
+# verifier rejects reused values because source-app tokens must not read
+# operator reports or issue cockpit sessions.
+SIGNALOPS_INGEST_TOKEN=
+SIGNALOPS_EVENT_PRIVACY_MODE=redact
+SIGNALOPS_MAX_BATCH_EVENTS=100
+SIGNALOPS_MAX_BODY_BYTES=262144
+
+# Per-instance free-tier safety guard for public write endpoints.
+# This is not a billing-grade quota; it protects the current runtime instance
+# from bursts while the product is still a controlled pilot.
+SIGNALOPS_RATE_LIMIT_WINDOW_MS=60000
+SIGNALOPS_EVENT_VALIDATE_RATE_LIMIT=60
+SIGNALOPS_EVENT_INGEST_RATE_LIMIT=120
+SIGNALOPS_PILOT_REQUEST_RATE_LIMIT=10
+
+# Durable storage: reuse exactly one approved storage path.
+# Preferred no-new-resource path: reuse an existing Cloudflare D1 database.
+# Run: CLOUDFLARE_API_TOKEN=... pnpm discover:cloudflare-d1 -- --existing-only --probe-schema
+# SIGNALOPS_DATABASE_TARGET=cloudflare_d1
+# CLOUDFLARE_ACCOUNT_ID=
+# CLOUDFLARE_D1_DATABASE_ID=
+# CLOUDFLARE_API_TOKEN=
+
+# Alternative: reuse an approved existing Supabase project.
+# SIGNALOPS_DATABASE_TARGET=supabase
+# SUPABASE_URL=
+# SUPABASE_SERVICE_ROLE_KEY=
+
+# Pilot request delivery: configure at least one path.
+# Production/Vercel delivery URLs must be HTTPS; http:// is accepted only for local-only receivers.
+SIGNALOPS_PILOT_REQUEST_WEBHOOK_URL=
+SIGNALOPS_PILOT_REQUEST_WEBHOOK_SECRET=
+SIGNALOPS_PILOT_REQUEST_MAX_BODY_BYTES=32768
+SIGNALOPS_DELIVERY_TIMEOUT_MS=5000
+SIGNALOPS_ALERT_WEBHOOK_URL=
+SIGNALOPS_ALERT_WEBHOOK_SECRET=
+SIGNALOPS_ALERT_COST_THRESHOLD_USD=1
+SIGNALOPS_PILOT_REQUEST_EMAIL_TO=
+SIGNALOPS_PILOT_REQUEST_EMAIL_FROM=
+SIGNALOPS_RESEND_API_KEY=
+RESEND_API_KEY=
+SIGNALOPS_PILOT_FALLBACK_EMAIL=
+NEXT_PUBLIC_SIGNALOPS_PILOT_FALLBACK_EMAIL=
+
+# Local-only flags. Never set these to true in production/Vercel.
+SIGNALOPS_ALLOW_EPHEMERAL_INGEST=false
+SIGNALOPS_ALLOW_UNAUTHENTICATED_INGEST=false
+SIGNALOPS_ALLOW_EPHEMERAL_PILOT_INTAKE=false

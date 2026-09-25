@@ -1,5 +1,8 @@
 import { Dashboard } from "@/components/dashboard";
 
-export default function CockpitPage() {
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
+export default async function CockpitPage() {
   return <Dashboard />;
 }
