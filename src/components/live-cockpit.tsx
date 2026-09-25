@@ -2385,9 +2385,9 @@ export function LiveCockpit() {
                 <FilterChip label="All" count={snapshot.totals.operations} active={operationFilter === "all"} onClick={() => activateOperationFilter("all")} />
                 <FilterChip label="Succeeded" count={snapshot.totals.succeeded} active={operationFilter === "succeeded"} tone="good" onClick={() => activateOperationFilter("succeeded")} />
                 <FilterChip label="Failed" count={snapshot.totals.failed} active={operationFilter === "failed"} tone="bad" onClick={() => activateOperationFilter("failed")} />
-                {snapshot.totals.cancelled > 0 ? <FilterChip label="Cancelled" count={snapshot.totals.cancelled} active={operationFilter === "cancelled"} onClick={() => activateOperationFilter("cancelled")} /> : null}
+                {snapshot.totals.cancelled > 0 || operationFilter === "cancelled" ? <FilterChip label="Cancelled" count={snapshot.totals.cancelled} active={operationFilter === "cancelled"} onClick={() => activateOperationFilter("cancelled")} /> : null}
                 <FilterChip label="Running" count={runningOperations} active={operationFilter === "running"} onClick={() => activateOperationFilter("running")} />
-                {snapshot.totals.stalled > 0 ? <FilterChip label="Stalled" count={snapshot.totals.stalled} active={operationFilter === "stalled"} onClick={() => activateOperationFilter("stalled")} /> : null}
+                {snapshot.totals.stalled > 0 || operationFilter === "stalled" ? <FilterChip label="Stalled" count={snapshot.totals.stalled} active={operationFilter === "stalled"} onClick={() => activateOperationFilter("stalled")} /> : null}
               </div>
               {(operationModel || operationFailure || operationKind || operationService || operationEnvironment || operationRelease || operationTriage !== "all" || operationQuery || operationSort !== "newest") ? (
                 <div className="mb-5 flex flex-wrap items-center gap-2 rounded-lg border border-blue-100 bg-blue-50/60 px-3 py-2" aria-label="Active operation view">
