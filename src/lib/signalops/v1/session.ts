@@ -103,11 +103,7 @@ export function createSignalOpsOperatorSessionTokenV1(input?: {
     role: "owner" as const,
     authMode: "password" as const,
   };
-  const configuredTtl = Number(process.env.SIGNALOPS_SESSION_TTL_SECONDS ?? 60 * 60);
-  const ttlSeconds =
-    Number.isFinite(configuredTtl) && configuredTtl > 0
-      ? Math.max(300, Math.min(configuredTtl, 24 * 60 * 60))
-      : 60 * 60;
+  const ttlSeconds = signalOpsSessionTtlSecondsV1();
   const issuedAt = Math.floor(Date.now() / 1_000);
   const payload = encode(
     JSON.stringify({
@@ -123,6 +119,17 @@ export function createSignalOpsOperatorSessionTokenV1(input?: {
   const signature = sign(payload);
   if (!signature) throw new Error("SIGNALOPS_SESSION_SECRET is required");
   return `${payload}.${signature}`;
+}
+
+export const MAX_SIGNALOPS_SESSION_TTL_SECONDS_V1 = 30 * 24 * 60 * 60;
+
+// Long sessions are safe to allow because Supabase sessions re-check the user and tenant
+// membership on every request; revoking membership ends access before the cookie expires.
+export function signalOpsSessionTtlSecondsV1(): number {
+  const configured = Number(process.env.SIGNALOPS_SESSION_TTL_SECONDS ?? 60 * 60);
+  return Number.isFinite(configured) && configured > 0
+    ? Math.max(300, Math.min(Math.floor(configured), MAX_SIGNALOPS_SESSION_TTL_SECONDS_V1))
+    : 60 * 60;
 }
 
 export function readSignalOpsOperatorSessionV1(
@@ -164,11 +171,7 @@ export function readSignalOpsOperatorSessionV1(
 
 export function serializeSignalOpsOperatorSessionCookieV1(token: string): string {
   const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
-  const ttlSeconds = Number(process.env.SIGNALOPS_SESSION_TTL_SECONDS ?? 60 * 60);
-  const maxAge =
-    Number.isFinite(ttlSeconds) && ttlSeconds > 0
-      ? Math.max(300, Math.min(ttlSeconds, 24 * 60 * 60))
-      : 60 * 60;
+  const maxAge = signalOpsSessionTtlSecondsV1();
   return `${signalOpsCockpitSessionCookieV1}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure}`;
 }
 

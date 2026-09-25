@@ -7,6 +7,7 @@ import {
   isSignalOpsOperatorAuthConfiguredV1,
   readSignalOpsOperatorSessionV1,
   serializeSignalOpsOperatorSessionCookieV1,
+  signalOpsSessionTtlSecondsV1,
   verifySignalOpsOperatorPasswordV1,
 } from "../src/lib/signalops/v1/session.ts";
 
@@ -92,5 +93,24 @@ if (originalWorkspaceName === undefined) delete process.env.SIGNALOPS_WORKSPACE_
 else process.env.SIGNALOPS_WORKSPACE_NAME = originalWorkspaceName;
 if (originalBootstrapFlag === undefined) delete process.env.SIGNALOPS_ALLOW_BOOTSTRAP_CREDENTIAL;
 else process.env.SIGNALOPS_ALLOW_BOOTSTRAP_CREDENTIAL = originalBootstrapFlag;
+
+// Operators can keep a 30-day session; longer values are clamped, and token and cookie agree.
+const originalTtl = process.env.SIGNALOPS_SESSION_TTL_SECONDS;
+const thirtyDays = 30 * 24 * 60 * 60;
+for (const [configured, expected] of [
+  [String(thirtyDays), thirtyDays],
+  [String(90 * 24 * 60 * 60), thirtyDays],
+  ["60", 300],
+  ["not-a-number", 3600],
+]) {
+  process.env.SIGNALOPS_SESSION_TTL_SECONDS = configured;
+  assert.equal(signalOpsSessionTtlSecondsV1(), expected, configured);
+  const longToken = createSignalOpsOperatorSessionTokenV1();
+  const longSession = JSON.parse(Buffer.from(longToken.split(".")[0], "base64url").toString("utf8"));
+  assert.equal(longSession.expiresAt - longSession.issuedAt, expected);
+  assert.match(serializeSignalOpsOperatorSessionCookieV1(longToken), new RegExp(`Max-Age=${expected}(;|$)`));
+}
+if (originalTtl === undefined) delete process.env.SIGNALOPS_SESSION_TTL_SECONDS;
+else process.env.SIGNALOPS_SESSION_TTL_SECONDS = originalTtl;
 
 console.log("signalops auth v1 checks passed");
