@@ -101,6 +101,11 @@ import type {
   SignalOpsOpsRangeV1,
   SignalOpsOpsSnapshotV1,
   SignalOpsProviderHealthV1,
+  SignalOpsProviderSnapshotV1,
+} from "@/lib/signalops/v1/ops-snapshot";
+import {
+  DEFAULT_SIGNALOPS_PROJECTION_POLICY_V1,
+  effectiveProviderHealthV1,
 } from "@/lib/signalops/v1/ops-snapshot";
 import type {
   SignalOpsOperatorMembershipV1,
@@ -356,6 +361,28 @@ function statusTone(status: string): string {
   if (status === "cancelled") return "bg-slate-50 text-slate-700 ring-slate-200";
   if (status === "stalled") return "bg-amber-50 text-amber-800 ring-amber-200";
   return "bg-rose-50 text-rose-700 ring-rose-200";
+}
+
+function ProviderHealthBadge({
+  provider,
+  range,
+}: {
+  provider: SignalOpsProviderSnapshotV1;
+  range: SignalOpsOpsRangeV1;
+}) {
+  const health = effectiveProviderHealthV1(provider);
+  const label =
+    health.status === "insufficient_data"
+      ? "no provider outcomes"
+      : `${health.status}${health.live ? "" : ` · ${range}`}${health.lowSample ? ` · n=${health.sampleSize}` : ""}`;
+  const title = health.live
+    ? `Live ${health.windowMinutes}-minute window · n=${health.sampleSize}`
+    : `No live traffic in the last ${provider.health.windowMinutes} minutes; evaluated over the selected ${range} window · n=${health.sampleSize}${health.lowSample ? ` (below the ${DEFAULT_SIGNALOPS_PROJECTION_POLICY_V1.minimumProviderSample}-attempt alerting minimum)` : ""}`;
+  return (
+    <span title={title} className={`justify-self-start rounded-full px-2 py-1 text-[10px] font-bold ring-1 sm:justify-self-end ${healthTone(health.status)}`}>
+      {label}
+    </span>
+  );
 }
 
 function healthTone(status: SignalOpsProviderHealthV1): string {
@@ -2052,7 +2079,7 @@ export function LiveCockpit() {
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h2 className="flex items-center gap-2 text-sm font-semibold text-[var(--text-strong)]"><Gauge className="size-4 text-[var(--accent)]" /> Reliability objectives</h2>
-                <p className="mt-1 text-[11px] text-[var(--text-dim)]">Versioned 24-hour SLO policies for this workspace; low samples never become false breaches</p>
+                <p className="mt-1 text-[11px] text-[var(--text-dim)]">Versioned SLO policies; low traffic widens the window to 7d, 30d, or 90d. Alerts still use the policy window.</p>
               </div>
               <span className="rounded-full bg-slate-50 px-2.5 py-1 font-mono text-[9px] font-bold text-slate-700 ring-1 ring-slate-200">{sloEvaluations.filter((evaluation) => evaluation.status === "breached").length} breached</span>
             </div>
@@ -2069,11 +2096,11 @@ export function LiveCockpit() {
                   <div key={evaluation.policy.id} className={`min-w-0 rounded-lg border p-4 ${tone}`}>
                     <div className="flex items-start justify-between gap-2">
                       <p className="text-[11px] font-semibold leading-4">{evaluation.policy.name}</p>
-                      <span className="rounded-full bg-white/80 px-2 py-0.5 font-mono text-[8px] font-bold uppercase ring-1 ring-current/15">{evaluation.status.replace("_", " ")}</span>
+                      <span className="rounded-full bg-white/80 px-2 py-0.5 font-mono text-[8px] font-bold uppercase ring-1 ring-current/15">{evaluation.status === "insufficient_data" ? "no data" : evaluation.status.replace("_", " ")}{evaluation.lowSample ? " · low n" : ""}</span>
                     </div>
                     <p className="mt-4 text-xl font-semibold tracking-tight">{formatSloValue(evaluation, evaluation.observedValue)}</p>
                     <p className="mt-1 text-[9px] opacity-75">objective {evaluation.policy.comparator === "gte" ? "≥" : "≤"} {formatSloValue(evaluation, evaluation.policy.objective)}</p>
-                    <p className="mt-3 font-mono text-[8px]">n={formatNumber(evaluation.sampleSize)} · min {formatNumber(evaluation.policy.minimumSample)} · {evaluation.policy.version}</p>
+                    <p className="mt-3 font-mono text-[8px]">n={formatNumber(evaluation.sampleSize)} · min {formatNumber(evaluation.policy.minimumSample)}{evaluation.evaluatedRange ? ` · ${evaluation.evaluatedRange} window` : ""} · {evaluation.policy.version}</p>
                   </div>
                 );
               })}
@@ -2230,7 +2257,7 @@ export function LiveCockpit() {
                     <div key={`${provider.providerKey}:${provider.modelKey}`} className="grid gap-3 py-4 first:pt-0 last:pb-0 sm:grid-cols-[1fr_auto_auto] sm:items-center">
                       <div><p className="text-sm font-semibold text-[var(--text-strong)]">{provider.providerVendor || provider.providerKey}</p><p className="mt-1 font-mono text-[10px] text-[var(--text-dim)]">{provider.providerKey} / {provider.modelKey}</p></div>
                       <div className="grid grid-cols-3 gap-5 text-right"><Mini label="Attempts" value={formatNumber(provider.attempts)} /><Mini label="p95" value={formatDuration(provider.p95DurationMs)} /><Mini label="Success" value={formatPercent(provider.successRate)} /></div>
-                      <span className={`justify-self-start rounded-full px-2 py-1 text-[10px] font-bold ring-1 sm:justify-self-end ${healthTone(provider.health.status)}`}>{provider.health.status === "insufficient_data" && provider.health.sampleSize === 0 ? `no traffic · ${provider.health.windowMinutes}m` : provider.health.status.replace("_", " ")}</span>
+                      <ProviderHealthBadge provider={provider} range={range} />
                     </div>
                   ))}
                 </div>}

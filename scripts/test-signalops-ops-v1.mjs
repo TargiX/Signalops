@@ -4,7 +4,10 @@ import os from "node:os";
 import path from "node:path";
 
 import { createFileSignalOpsEventStoreV1 } from "../src/lib/signalops/v1/file-event-store.ts";
-import { buildSignalOpsOpsSnapshotV1 } from "../src/lib/signalops/v1/ops-snapshot.ts";
+import {
+  buildSignalOpsOpsSnapshotV1,
+  effectiveProviderHealthV1,
+} from "../src/lib/signalops/v1/ops-snapshot.ts";
 
 const fixture = (name) => import(`../schemas/ai-telemetry/v1/fixtures/valid/${name}.json`, {
   with: { type: "json" },
@@ -364,5 +367,17 @@ const semanticsBuckets = semanticsSnapshot.timeline.reduce(
   0,
 );
 assert.equal(semanticsBuckets, 2, "Timeline failures must exclude cancellations.");
+
+// Route health falls back to the selected range when the live window has no traffic.
+const quietRoute = snapshot.providers[0];
+assert.ok(quietRoute);
+assert.equal(quietRoute.health.status, "insufficient_data");
+assert.equal(quietRoute.health.sampleSize, 0);
+assert.ok(quietRoute.windowHealth.sampleSize > 0);
+assert.notEqual(quietRoute.windowHealth.status, "insufficient_data");
+assert.equal(quietRoute.windowHealth.lowSample, true);
+const effective = effectiveProviderHealthV1(quietRoute);
+assert.equal(effective.live, false);
+assert.equal(effective.status, quietRoute.windowHealth.status);
 
 console.log("signalops ops v1 checks passed");

@@ -48,6 +48,8 @@ function isMatchingSnapshot(
     Number.isFinite(row.snapshot?.totals?.cancelled) &&
     Number.isFinite(row.snapshot?.totals?.stalled) &&
     row.snapshot?.coverage?.cohort !== undefined &&
+    Array.isArray(row.snapshot?.providers) &&
+    row.snapshot.providers.every((provider) => provider?.windowHealth !== undefined) &&
     Number.isFinite(row.snapshot?.coverage?.attemptLifecycle?.observed) &&
     Array.isArray(row.snapshot?.failureBreakdown) &&
     Date.parse(row.projected_at) >= now.getTime() - 60_000

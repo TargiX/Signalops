@@ -9,6 +9,7 @@ import {
 import { buildSignalOpsOpsSnapshotV1 } from "../src/lib/signalops/v1/ops-snapshot.ts";
 import {
   defaultSignalOpsSloPoliciesV1,
+  evaluateSignalOpsSloPoliciesAdaptiveV1,
   evaluateSignalOpsSloPoliciesV1,
   listSignalOpsSloPoliciesV1,
   updateSignalOpsSloPolicyV1,
@@ -66,6 +67,68 @@ assert.equal(
   )?.status,
   "insufficient_data",
 );
+
+// Display evaluation widens the window for low-volume tenants instead of hiding data.
+const bySampleRange = {
+  "24h": { succeeded: 3, failed: 0, durations: 3 },
+  "7d": { succeeded: 25, failed: 0, durations: 25 },
+  "30d": { succeeded: 60, failed: 12, durations: 72 },
+  "90d": { succeeded: 90, failed: 20, durations: 110 },
+};
+const loadedRanges = [];
+const adaptive = await evaluateSignalOpsSloPoliciesAdaptiveV1({
+  policies: defaults,
+  now,
+  loadSnapshot: async (range) => {
+    loadedRanges.push(range);
+    const ranged = structuredClone(snapshot);
+    const sample = bySampleRange[range];
+    ranged.range = range;
+    ranged.totals.succeeded = sample.succeeded;
+    ranged.totals.failed = sample.failed;
+    ranged.totals.successRate = sample.succeeded / (sample.succeeded + sample.failed);
+    ranged.totals.operationsWithDuration = sample.durations;
+    ranged.totals.p95DurationMs = 30_000;
+    ranged.coverage.providerAttempts = { observed: sample.durations, total: sample.durations, ratio: 1 };
+    ranged.coverage.failureClassification =
+      range === "90d" ? { observed: 3, total: 4, ratio: 0.75 } : { observed: 0, total: 0, ratio: null };
+    return ranged;
+  },
+});
+const adaptiveBy = Object.fromEntries(adaptive.map((evaluation) => [evaluation.policy.metric, evaluation]));
+assert.equal(adaptiveBy.operation_success_rate.evaluatedRange, "7d");
+assert.equal(adaptiveBy.operation_success_rate.status, "met");
+assert.equal(adaptiveBy.operation_success_rate.lowSample, false);
+assert.equal(adaptiveBy.operation_success_rate.sampleSize, 25);
+assert.equal(adaptiveBy.operation_p95_duration_ms.evaluatedRange, "7d");
+assert.equal(
+  adaptiveBy.failure_classification_coverage.evaluatedRange,
+  "90d",
+  "A sample below the minimum is still judged on the widest window that has data.",
+);
+assert.equal(adaptiveBy.failure_classification_coverage.lowSample, true);
+assert.equal(adaptiveBy.failure_classification_coverage.status, "breached");
+assert.equal(adaptiveBy.signal_freshness_ms.status, "disabled");
+assert.ok(adaptive.every((evaluation) => evaluation.status !== "insufficient_data"));
+assert.deepEqual([...new Set(loadedRanges)], ["24h", "7d", "30d", "90d"]);
+
+const emptyAdaptive = await evaluateSignalOpsSloPoliciesAdaptiveV1({
+  policies: defaults.filter((policy) => policy.metric === "operation_success_rate"),
+  now,
+  loadSnapshot: async () => buildSignalOpsOpsSnapshotV1({ tenantId, range: "24h", records: [], now }),
+});
+assert.equal(emptyAdaptive[0].status, "insufficient_data", "No data at all stays insufficient.");
+
+const busyLoads = [];
+await evaluateSignalOpsSloPoliciesAdaptiveV1({
+  policies: defaults.filter((policy) => policy.metric === "operation_success_rate"),
+  now,
+  loadSnapshot: async (range) => {
+    busyLoads.push(range);
+    return snapshot;
+  },
+});
+assert.deepEqual(busyLoads, ["24h"], "A busy tenant must not load wider windows.");
 
 const configuredFreshness = await updateSignalOpsSloPolicyV1({
   tenantId,

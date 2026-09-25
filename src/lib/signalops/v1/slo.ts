@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import type { SignalOpsOpsSnapshotV1 } from "./ops-snapshot.ts";
+import type { SignalOpsOpsRangeV1, SignalOpsOpsSnapshotV1 } from "./ops-snapshot.ts";
 import {
   getSignalOpsSupabaseConfigV1,
   signalOpsSupabaseRestRequestV1,
@@ -45,6 +45,10 @@ export type SignalOpsSloEvaluationV1 = {
   observedValue: number | null;
   sampleSize: number;
   evaluatedAt: string;
+  // Set by the adaptive (display) evaluation: the range actually used, and whether the sample is
+  // still below the policy minimum. Incident evaluation never widens the window.
+  evaluatedRange?: SignalOpsOpsRangeV1;
+  lowSample?: boolean;
 };
 
 type SloPolicyRow = {
@@ -350,6 +354,102 @@ function observationForPolicy(
   };
 }
 
+function judgeSloObservationV1(
+  policy: SignalOpsSloPolicyV1,
+  observation: { observedValue: number; sampleSize: number },
+  now: Date,
+): SignalOpsSloEvaluationV1 {
+  const critical =
+    policy.comparator === "gte"
+      ? observation.observedValue < policy.criticalThreshold
+      : observation.observedValue > policy.criticalThreshold;
+  const warning =
+    policy.comparator === "gte"
+      ? observation.observedValue < policy.warningThreshold
+      : observation.observedValue > policy.warningThreshold;
+  return {
+    policy,
+    status: critical || warning ? "breached" : "met",
+    severity: critical ? "critical" : warning ? "warning" : null,
+    ...observation,
+    evaluatedAt: now.toISOString(),
+  };
+}
+
+const SLO_EVALUATION_RANGES_V1: readonly { range: SignalOpsOpsRangeV1; minutes: number }[] = [
+  { range: "24h", minutes: 1_440 },
+  { range: "7d", minutes: 7 * 1_440 },
+  { range: "30d", minutes: 30 * 1_440 },
+  { range: "90d", minutes: 90 * 1_440 },
+];
+
+/**
+ * Display evaluation for low-volume tenants: start at the policy window and widen until the
+ * minimum sample is met. If it never is, judge the widest window that holds data and flag it as
+ * a low sample. Only a window with no observations at all stays `insufficient_data`.
+ */
+export async function evaluateSignalOpsSloPoliciesAdaptiveV1(input: {
+  policies: readonly SignalOpsSloPolicyV1[];
+  loadSnapshot: (range: SignalOpsOpsRangeV1) => Promise<SignalOpsOpsSnapshotV1>;
+  now?: Date;
+}): Promise<SignalOpsSloEvaluationV1[]> {
+  const snapshots = new Map<SignalOpsOpsRangeV1, Promise<SignalOpsOpsSnapshotV1>>();
+  const load = (range: SignalOpsOpsRangeV1) => {
+    const cached = snapshots.get(range) ?? input.loadSnapshot(range);
+    snapshots.set(range, cached);
+    return cached;
+  };
+  const evaluations: SignalOpsSloEvaluationV1[] = [];
+  for (const policy of input.policies) {
+    const ranges = SLO_EVALUATION_RANGES_V1.filter(
+      (candidate, index, all) =>
+        candidate.minutes >= policy.windowMinutes || index === all.length - 1,
+    );
+    const first = await load(ranges[0].range);
+    const now = input.now ?? new Date(first.generatedAt);
+    if (!policy.enabled) {
+      evaluations.push({
+        ...evaluateSignalOpsSloPoliciesV1({ snapshot: first, policies: [policy], now })[0],
+        evaluatedRange: ranges[0].range,
+      });
+      continue;
+    }
+    let widest: { range: SignalOpsOpsRangeV1; observedValue: number; sampleSize: number } | null =
+      null;
+    let judged: SignalOpsSloEvaluationV1 | null = null;
+    for (const { range } of ranges) {
+      const observation = observationForPolicy(await load(range), policy.metric, now);
+      if (observation.observedValue === null || observation.sampleSize === 0) continue;
+      const value = { observedValue: observation.observedValue, sampleSize: observation.sampleSize };
+      widest = { range, ...value };
+      if (observation.sampleSize >= policy.minimumSample) {
+        judged = { ...judgeSloObservationV1(policy, value, now), evaluatedRange: range, lowSample: false };
+        break;
+      }
+    }
+    if (!judged && widest) {
+      judged = {
+        ...judgeSloObservationV1(policy, widest, now),
+        evaluatedRange: widest.range,
+        lowSample: true,
+      };
+    }
+    evaluations.push(
+      judged ?? {
+        policy,
+        status: "insufficient_data",
+        severity: null,
+        observedValue: null,
+        sampleSize: 0,
+        evaluatedAt: now.toISOString(),
+        evaluatedRange: ranges.at(-1)?.range,
+        lowSample: false,
+      },
+    );
+  }
+  return evaluations;
+}
+
 export function evaluateSignalOpsSloPoliciesV1(input: {
   snapshot: SignalOpsOpsSnapshotV1;
   policies: readonly SignalOpsSloPolicyV1[];
@@ -380,20 +480,10 @@ export function evaluateSignalOpsSloPoliciesV1(input: {
       };
     }
 
-    const critical =
-      policy.comparator === "gte"
-        ? observation.observedValue < policy.criticalThreshold
-        : observation.observedValue > policy.criticalThreshold;
-    const warning =
-      policy.comparator === "gte"
-        ? observation.observedValue < policy.warningThreshold
-        : observation.observedValue > policy.warningThreshold;
-    return {
+    return judgeSloObservationV1(
       policy,
-      status: critical || warning ? "breached" : "met",
-      severity: critical ? "critical" : warning ? "warning" : null,
-      ...observation,
-      evaluatedAt: now.toISOString(),
-    };
+      { observedValue: observation.observedValue, sampleSize: observation.sampleSize },
+      now,
+    );
   });
 }

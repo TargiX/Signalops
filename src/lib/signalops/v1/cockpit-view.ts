@@ -6,7 +6,7 @@ import type {
   SignalOpsProviderSnapshotV1,
   SignalOpsTimelineBucketV1,
 } from "./ops-snapshot.ts";
-import { isFailedOperationStatusV1 } from "./ops-snapshot.ts";
+import { effectiveProviderHealthV1, isFailedOperationStatusV1 } from "./ops-snapshot.ts";
 
 const SIGNALOPS_COCKPIT_RANGES_V1 = new Set<SignalOpsOpsRangeV1>([
   "24h",
@@ -500,7 +500,7 @@ export function filterAndSortSignalOpsProvidersV1(
         row.providerKey,
         row.providerVendor,
         row.modelKey,
-        row.health.status,
+        effectiveProviderHealthV1(row).status,
       ]
         .filter(Boolean)
         .join("\n")
@@ -512,8 +512,8 @@ export function filterAndSortSignalOpsProvidersV1(
       let comparison = 0;
       if (sort === "attention") {
         comparison =
-          providerAttentionRankV1(left.row.health.status) -
-          providerAttentionRankV1(right.row.health.status);
+          providerAttentionRankV1(effectiveProviderHealthV1(left.row).status) -
+          providerAttentionRankV1(effectiveProviderHealthV1(right.row).status);
         if (comparison === 0) {
           comparison =
             (1 - (right.row.successRate ?? 1)) -

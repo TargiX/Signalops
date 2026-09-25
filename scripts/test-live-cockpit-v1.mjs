@@ -87,6 +87,7 @@ assert.match(projectionSource, /operationsWithAttemptTelemetry/);
 assert.match(projectionSource, /operationsWithDuration/);
 assert.match(projectionSource, /row\.snapshot\?\.totals\?\.cancelled/);
 assert.match(projectionSource, /row\.snapshot\?\.coverage\?\.cohort/);
+assert.match(projectionSource, /provider\?\.windowHealth !== undefined/);
 assert.match(projectionSource, /row\.snapshot\?\.coverage\?\.attemptLifecycle/);
 assert.match(projectionSource, /Array\.isArray\(row\.snapshot\?\.failureBreakdown\)/);
 assert.match(liveSource, /insufficient live provider data/i);

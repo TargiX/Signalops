@@ -56,14 +56,19 @@ export type SignalOpsProviderSnapshotV1 = {
   retryableFailures: number;
   p95DurationMs: number | null;
   costByCurrency: SignalOpsCurrencyCostV1[];
-  health: {
-    status: SignalOpsProviderHealthV1;
-    sampleSize: number;
-    failureRate: number | null;
-    p95DurationMs: number | null;
-    windowMinutes: number;
-    policyVersion: string;
-  };
+  health: SignalOpsProviderHealthEvaluationV1;
+  // Same thresholds over the whole selected range. Display-only fallback for low-volume routes;
+  // alerting keeps using the short `health` window.
+  windowHealth: SignalOpsProviderHealthEvaluationV1 & { lowSample: boolean };
+};
+
+export type SignalOpsProviderHealthEvaluationV1 = {
+  status: SignalOpsProviderHealthV1;
+  sampleSize: number;
+  failureRate: number | null;
+  p95DurationMs: number | null;
+  windowMinutes: number;
+  policyVersion: string;
 };
 
 // "stalled" is a projection state, not a terminal outcome: accepted work with no terminal event
@@ -212,7 +217,7 @@ type AttemptState = {
 
 type ProviderAccumulator = Omit<
   SignalOpsProviderSnapshotV1,
-  "successRate" | "p95DurationMs" | "costByCurrency" | "health"
+  "successRate" | "p95DurationMs" | "costByCurrency" | "health" | "windowHealth"
 > & {
   durations: number[];
   costs: Map<string, SignalOpsCostTotalsV1>;
@@ -356,8 +361,10 @@ function providerHealth(
   row: ProviderAccumulator,
   now: Date,
   policy: SignalOpsProjectionPolicyV1,
-): SignalOpsProviderSnapshotV1["health"] {
-  const windowStart = now.getTime() - policy.providerWindowMinutes * 60 * 1_000;
+  windowMinutes = policy.providerWindowMinutes,
+  minimumSample = policy.minimumProviderSample,
+): SignalOpsProviderHealthEvaluationV1 {
+  const windowStart = now.getTime() - windowMinutes * 60 * 1_000;
   const eligible = row.recentOutcomes.filter(
     (outcome) => Date.parse(outcome.occurredAt) >= windowStart && !outcome.excludedFailure,
   );
@@ -368,7 +375,7 @@ function providerHealth(
   const failureRate = eligible.length === 0 ? null : failed / eligible.length;
   const p95DurationMs = percentile95(durations);
   let status: SignalOpsProviderHealthV1 = "insufficient_data";
-  if (eligible.length >= policy.minimumProviderSample) {
+  if (eligible.length >= minimumSample) {
     if (
       (failureRate ?? 0) >= policy.criticalFailureRate ||
       (p95DurationMs ?? 0) >= policy.criticalP95DurationMs
@@ -388,9 +395,20 @@ function providerHealth(
     sampleSize: eligible.length,
     failureRate,
     p95DurationMs,
-    windowMinutes: policy.providerWindowMinutes,
+    windowMinutes,
     policyVersion: policy.version,
   };
+}
+
+// The status an operator should see: the live window when it has enough traffic, otherwise the
+// selected range as long as it holds at least one provider-attributable outcome.
+export function effectiveProviderHealthV1(
+  provider: Pick<SignalOpsProviderSnapshotV1, "health" | "windowHealth">,
+): SignalOpsProviderHealthEvaluationV1 & { lowSample: boolean; live: boolean } {
+  if (provider.health.status !== "insufficient_data" || !provider.windowHealth) {
+    return { ...provider.health, lowSample: false, live: true };
+  }
+  return { ...provider.windowHealth, live: false };
 }
 
 export function isFailedOperationStatusV1(status: SignalOpsOperationStatusV1): boolean {
@@ -428,6 +446,7 @@ export function buildSignalOpsOpsSnapshotV1(input: {
   const policy = input.policy ?? DEFAULT_SIGNALOPS_PROJECTION_POLICY_V1;
   const startMs = Date.parse(rangeStartV1(input.range, now));
   const endMs = now.getTime();
+  const rangeMinutes = (endMs - startMs) / 60_000;
   const lifecycleRecords = input.records
     .filter(
       (record) =>
@@ -605,7 +624,9 @@ export function buildSignalOpsOpsSnapshotV1(input: {
   }
 
   const providers = [...providerRows.values()]
-    .map((row): SignalOpsProviderSnapshotV1 => ({
+    .map((row): SignalOpsProviderSnapshotV1 => {
+      const windowHealth = providerHealth(row, now, policy, rangeMinutes, 1);
+      return {
       providerKey: row.providerKey,
       providerVendor: row.providerVendor,
       modelKey: row.modelKey,
@@ -618,7 +639,12 @@ export function buildSignalOpsOpsSnapshotV1(input: {
       p95DurationMs: percentile95(row.durations),
       costByCurrency: costRows(row.costs),
       health: providerHealth(row, now, policy),
-    }))
+      windowHealth: {
+        ...windowHealth,
+        lowSample: windowHealth.sampleSize < policy.minimumProviderSample,
+      },
+      };
+    })
     .sort(
       (left, right) =>
         right.attempts - left.attempts ||
