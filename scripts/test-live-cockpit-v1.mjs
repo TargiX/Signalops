@@ -85,6 +85,8 @@ assert.match(projectionSource, /Array\.isArray\(row\.snapshot\?\.models\)/);
 assert.match(projectionSource, /Array\.isArray\(row\.snapshot\?\.recentFailedOperations\)/);
 assert.match(projectionSource, /operationsWithAttemptTelemetry/);
 assert.match(projectionSource, /operationsWithDuration/);
+assert.match(projectionSource, /row\.snapshot\?\.totals\?\.cancelled/);
+assert.match(projectionSource, /row\.snapshot\?\.coverage\?\.cohort/);
 assert.match(projectionSource, /row\.snapshot\?\.coverage\?\.attemptLifecycle/);
 assert.match(projectionSource, /Array\.isArray\(row\.snapshot\?\.failureBreakdown\)/);
 assert.match(liveSource, /insufficient live provider data/i);
@@ -117,8 +119,10 @@ assert.match(
   "The failure KPI must open a real failed-operations view.",
 );
 assert.match(liveSource, /snapshot\.recentFailedOperations/);
-assert.match(liveSource, /snapshot\.totals\.operationsWithAttemptTelemetry/);
-assert.match(liveSource, /retryable attempts · inspect/);
+assert.match(liveSource, /snapshot\.coverage\.providerAttempts\.ratio/);
+assert.match(liveSource, /provider\/system · \$\{formatNumber\(customerFailures\)\} content\/input/);
+assert.match(liveSource, /label="Stalled"/);
+assert.match(liveSource, /label="Cancelled"/);
 assert.match(liveSource, /Instrumentation quality/);
 assert.match(liveSource, /Failure intelligence/);
 assert.match(liveSource, /openOperationTrace/);
@@ -268,6 +272,27 @@ assert.deepEqual(
   filterSignalOpsOperationsV1(operationRows, "all").map((row) => row.operationId),
   ["ok", "bad", "running"],
 );
+const outcomeRows = [
+  ...operationRows,
+  { operationId: "expired", status: "expired" },
+  { operationId: "cancelled", status: "cancelled" },
+  { operationId: "stalled", status: "stalled" },
+];
+assert.deepEqual(
+  filterSignalOpsOperationsV1(outcomeRows, "failed").map((row) => row.operationId),
+  ["bad", "expired"],
+  "Failed must exclude customer cancellations and stalled work.",
+);
+assert.deepEqual(
+  filterSignalOpsOperationsV1(outcomeRows, "cancelled").map((row) => row.operationId),
+  ["cancelled"],
+);
+assert.deepEqual(
+  filterSignalOpsOperationsV1(outcomeRows, "stalled").map((row) => row.operationId),
+  ["stalled"],
+);
+assert.equal(readSignalOpsCockpitViewV1("?status=stalled", "30d").status, "stalled");
+assert.equal(readSignalOpsCockpitViewV1("?status=cancelled", "30d").status, "cancelled");
 assert.deepEqual(
   paginateSignalOpsRowsV1(["a", "b", "c", "d", "e"], 2, 2),
   { rows: ["c", "d"], page: 2, pageCount: 3, total: 5 },

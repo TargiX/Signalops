@@ -6,6 +6,7 @@ import type {
   SignalOpsProviderSnapshotV1,
   SignalOpsTimelineBucketV1,
 } from "./ops-snapshot.ts";
+import { isFailedOperationStatusV1 } from "./ops-snapshot.ts";
 
 const SIGNALOPS_COCKPIT_RANGES_V1 = new Set<SignalOpsOpsRangeV1>([
   "24h",
@@ -18,7 +19,9 @@ export type SignalOpsOperationFilterV1 =
   | "all"
   | "succeeded"
   | "failed"
-  | "running";
+  | "cancelled"
+  | "running"
+  | "stalled";
 
 export type SignalOpsOperationSortV1 =
   | "newest"
@@ -109,7 +112,9 @@ const SIGNALOPS_COCKPIT_FILTERS_V1 = new Set<SignalOpsOperationFilterV1>([
   "all",
   "succeeded",
   "failed",
+  "cancelled",
   "running",
+  "stalled",
 ]);
 
 const SIGNALOPS_COCKPIT_SORTS_V1 = new Set<SignalOpsOperationSortV1>([
@@ -295,9 +300,7 @@ export function filterSignalOpsOperationsV1<
 >(rows: readonly T[], filter: SignalOpsOperationFilterV1): T[] {
   if (filter === "all") return [...rows];
   if (filter === "failed") {
-    return rows.filter(
-      (row) => row.status !== "succeeded" && row.status !== "running",
-    );
+    return rows.filter((row) => isFailedOperationStatusV1(row.status));
   }
   return rows.filter((row) => row.status === filter);
 }
@@ -339,9 +342,10 @@ function operationAttentionRankV1(status: SignalOpsOperationSnapshotV1["status"]
   if (status === "failed" || status === "expired" || status === "abandoned") {
     return 0;
   }
-  if (status === "cancelled") return 1;
-  if (status === "running") return 2;
-  return 3;
+  if (status === "stalled") return 1;
+  if (status === "cancelled") return 2;
+  if (status === "running") return 3;
+  return 4;
 }
 
 function compareNewestV1(
@@ -360,8 +364,7 @@ function matchesOperationTriageV1(
   if (triage === "retryable") return row.failureRetryable === true;
   if (triage === "unclassified") {
     return (
-      row.status !== "succeeded" &&
-      row.status !== "running" &&
+      isFailedOperationStatusV1(row.status) &&
       (!row.failureCategory || row.failureCategory === "unknown")
     );
   }

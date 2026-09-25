@@ -354,6 +354,7 @@ function statusTone(status: string): string {
   if (status === "succeeded") return "bg-emerald-50 text-emerald-700 ring-emerald-200";
   if (status === "running") return "bg-blue-50 text-blue-700 ring-blue-200";
   if (status === "cancelled") return "bg-slate-50 text-slate-700 ring-slate-200";
+  if (status === "stalled") return "bg-amber-50 text-amber-800 ring-amber-200";
   return "bg-rose-50 text-rose-700 ring-rose-200";
 }
 
@@ -1455,12 +1456,24 @@ export function LiveCockpit() {
       : "No reported or catalog-estimated cost in this window";
   const runningOperations = Math.max(
     0,
-    snapshot.totals.operations - snapshot.totals.succeeded - snapshot.totals.failed,
+    snapshot.totals.operations -
+      snapshot.totals.succeeded -
+      snapshot.totals.failed -
+      snapshot.totals.cancelled -
+      snapshot.totals.stalled,
   );
-  const attemptCoverage =
-    snapshot.totals.operations === 0
-      ? null
-      : snapshot.totals.operationsWithAttemptTelemetry / snapshot.totals.operations;
+  const attemptCoverage = snapshot.coverage.providerAttempts.ratio;
+  const coverageCohort = snapshot.coverage.cohort;
+  const coverageCohortNote =
+    coverageCohort.startsAt && coverageCohort.excludedOperations > 0
+      ? `${formatNumber(coverageCohort.excludedOperations)} operation${coverageCohort.excludedOperations === 1 ? "" : "s"} accepted before attempt telemetry began (${timelineLabel(coverageCohort.startsAt, "30d")} UTC) are excluded from attempt and failure-taxonomy coverage.`
+      : null;
+  const providerFailures =
+    snapshot.totals.failedByResponsibility.provider +
+    snapshot.totals.failedByResponsibility.platform +
+    snapshot.totals.failedByResponsibility.client +
+    snapshot.totals.failedByResponsibility.unknown;
+  const customerFailures = snapshot.totals.failedByResponsibility.customer;
   const retainedOperations = mergeSignalOpsOperationSamplesV1(
     snapshot.recentOperations,
     snapshot.recentFailedOperations,
@@ -1950,9 +1963,9 @@ export function LiveCockpit() {
         <section className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
           <Metric icon={Database} label="Operations" value={formatNumber(snapshot.totals.operations)} detail="Inspect latest operations →" active={operationFilter === "all"} onClick={() => activateOperationFilter("all")} />
           <Metric icon={CheckCircle2} label="Succeeded" value={formatNumber(snapshot.totals.succeeded)} detail={`${formatPercent(snapshot.totals.successRate)} success rate →`} tone="good" active={operationFilter === "succeeded"} onClick={() => activateOperationFilter("succeeded")} />
-          <Metric icon={TriangleAlert} label="Failed" value={formatNumber(snapshot.totals.failed)} detail={`${formatNumber(snapshot.totals.retryableFailures)} retryable attempts · inspect →`} tone="bad" active={operationFilter === "failed"} onClick={() => activateOperationFilter("failed")} />
+          <Metric icon={TriangleAlert} label="Failed" value={formatNumber(snapshot.totals.failed)} detail={`${formatNumber(providerFailures)} provider/system · ${formatNumber(customerFailures)} content/input →`} tone="bad" active={operationFilter === "failed"} onClick={() => activateOperationFilter("failed")} />
           <Metric icon={Clock3} label="Operation p95" value={formatDuration(snapshot.totals.p95DurationMs)} detail="terminal duration" />
-          <Metric icon={Activity} label="Provider coverage" value={formatPercent(attemptCoverage)} detail={`${formatNumber(snapshot.totals.operationsWithAttemptTelemetry)} / ${formatNumber(snapshot.totals.operations)} operations`} tone="warn" />
+          <Metric icon={Activity} label="Provider coverage" value={formatPercent(attemptCoverage)} detail={`${formatNumber(snapshot.coverage.providerAttempts.observed)} / ${formatNumber(snapshot.coverage.providerAttempts.total)} operations${coverageCohort.excludedOperations > 0 ? ` · ${formatNumber(coverageCohort.excludedOperations)} legacy` : ""}`} tone="warn" />
           <Metric icon={DollarSign} label="Reported cost" value={costSummary(snapshot.totals.costByCurrency, "reported")} detail={`${costSummary(snapshot.totals.costByCurrency, "estimated")} estimated`} />
         </section>
 
@@ -2113,6 +2126,11 @@ export function LiveCockpit() {
             <p className="mt-5 rounded-lg border border-blue-100 bg-blue-50/70 px-3 py-2.5 text-[10px] leading-4 text-blue-900">
               These ratios describe what producers actually emitted. Logical model labels do not count as provider-route evidence, and catalog prices do not count as reported billing.
             </p>
+            {coverageCohortNote ? (
+              <p className="mt-2 rounded-lg border border-[var(--border)] bg-[var(--surface-mute)] px-3 py-2.5 text-[10px] leading-4 text-[var(--text-dim)]">
+                {coverageCohortNote}
+              </p>
+            ) : null}
           </Panel>
 
           <Panel
@@ -2175,7 +2193,7 @@ export function LiveCockpit() {
         <section className="mt-4 grid items-start gap-5 lg:grid-cols-2">
           <Panel
             title="Provider route health"
-            subtitle={`${formatNumber(snapshot.totals.operationsWithAttemptTelemetry)} of ${formatNumber(snapshot.totals.operations)} operations include explicit attempt telemetry`}
+            subtitle={`${formatNumber(snapshot.coverage.providerAttempts.observed)} of ${formatNumber(snapshot.coverage.providerAttempts.total)} operations include explicit attempt telemetry`}
           >
             <div className="mb-5 rounded-lg border border-amber-200 bg-amber-50/70 p-4">
               <div className="flex items-center justify-between gap-3">
@@ -2212,7 +2230,7 @@ export function LiveCockpit() {
                     <div key={`${provider.providerKey}:${provider.modelKey}`} className="grid gap-3 py-4 first:pt-0 last:pb-0 sm:grid-cols-[1fr_auto_auto] sm:items-center">
                       <div><p className="text-sm font-semibold text-[var(--text-strong)]">{provider.providerVendor || provider.providerKey}</p><p className="mt-1 font-mono text-[10px] text-[var(--text-dim)]">{provider.providerKey} / {provider.modelKey}</p></div>
                       <div className="grid grid-cols-3 gap-5 text-right"><Mini label="Attempts" value={formatNumber(provider.attempts)} /><Mini label="p95" value={formatDuration(provider.p95DurationMs)} /><Mini label="Success" value={formatPercent(provider.successRate)} /></div>
-                      <span className={`justify-self-start rounded-full px-2 py-1 text-[10px] font-bold ring-1 sm:justify-self-end ${healthTone(provider.health.status)}`}>{provider.health.status.replace("_", " ")}</span>
+                      <span className={`justify-self-start rounded-full px-2 py-1 text-[10px] font-bold ring-1 sm:justify-self-end ${healthTone(provider.health.status)}`}>{provider.health.status === "insufficient_data" && provider.health.sampleSize === 0 ? `no traffic · ${provider.health.windowMinutes}m` : provider.health.status.replace("_", " ")}</span>
                     </div>
                   ))}
                 </div>}
@@ -2367,7 +2385,9 @@ export function LiveCockpit() {
                 <FilterChip label="All" count={snapshot.totals.operations} active={operationFilter === "all"} onClick={() => activateOperationFilter("all")} />
                 <FilterChip label="Succeeded" count={snapshot.totals.succeeded} active={operationFilter === "succeeded"} tone="good" onClick={() => activateOperationFilter("succeeded")} />
                 <FilterChip label="Failed" count={snapshot.totals.failed} active={operationFilter === "failed"} tone="bad" onClick={() => activateOperationFilter("failed")} />
+                {snapshot.totals.cancelled > 0 ? <FilterChip label="Cancelled" count={snapshot.totals.cancelled} active={operationFilter === "cancelled"} onClick={() => activateOperationFilter("cancelled")} /> : null}
                 <FilterChip label="Running" count={runningOperations} active={operationFilter === "running"} onClick={() => activateOperationFilter("running")} />
+                {snapshot.totals.stalled > 0 ? <FilterChip label="Stalled" count={snapshot.totals.stalled} active={operationFilter === "stalled"} onClick={() => activateOperationFilter("stalled")} /> : null}
               </div>
               {(operationModel || operationFailure || operationKind || operationService || operationEnvironment || operationRelease || operationTriage !== "all" || operationQuery || operationSort !== "newest") ? (
                 <div className="mb-5 flex flex-wrap items-center gap-2 rounded-lg border border-blue-100 bg-blue-50/60 px-3 py-2" aria-label="Active operation view">
