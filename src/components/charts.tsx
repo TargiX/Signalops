@@ -216,9 +216,11 @@ function useChartWidth() {
 export function SpendDonutChart({
   data,
   currency = "USD",
+  totalLabel = "Total Spend",
 }: {
   data: ChartProvider[];
   currency?: string;
+  totalLabel?: string;
 }) {
   const [containerRef, width] = useChartWidth();
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
@@ -299,7 +301,7 @@ export function SpendDonutChart({
                   className="flex flex-col items-center"
                 >
                   <span className="mb-0.5 text-[13px] font-medium text-[var(--text-dim)]">
-                    Total Spend
+                    {totalLabel}
                   </span>
                   <span className="text-xl font-bold tracking-tight text-[var(--text)]">
                     {formatCurrency(totalSpend, currency)}

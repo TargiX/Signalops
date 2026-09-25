@@ -755,6 +755,7 @@ export function buildSignalOpsCockpitBriefV1(
       ? null
       : snapshot.totals.operationsWithAttemptTelemetry /
         snapshot.totals.operations;
+  const costCoverage = snapshot.coverage.operationCostEvidence;
 
   return [
     "# SignalOps investigation brief",
@@ -768,6 +769,7 @@ export function buildSignalOpsCockpitBriefV1(
     `- Operation p95: ${durationTextV1(snapshot.totals.p95DurationMs)}`,
     `- Explicit attempt coverage: ${percentTextV1(attemptCoverage)}`,
     `- Failure classification coverage: ${percentTextV1(snapshot.coverage.failureClassification.ratio)}`,
+    `- Cost evidence coverage: ${percentTextV1(costCoverage.ratio)} (${costCoverage.observed}/${costCoverage.total} operations)`,
     `- Retained view: ${retainedMatches} matches across ${indexedRows} indexed rows`,
     `- Filters: ${filters.length > 0 ? filters.map(markdownCodeV1).join(", ") : "none"}`,
     "",

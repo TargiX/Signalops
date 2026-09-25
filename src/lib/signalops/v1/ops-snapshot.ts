@@ -179,6 +179,7 @@ export type SignalOpsOpsSnapshotV1 = {
     retryableFailures: number;
     operationsWithDuration: number;
     operationsWithAttemptTelemetry: number;
+    operationsWithCostEvidence: number;
     costByCurrency: SignalOpsCurrencyCostV1[];
   };
   coverage: {
@@ -189,6 +190,9 @@ export type SignalOpsOpsSnapshotV1 = {
     failureClassification: SignalOpsCoverageMetricV1;
     failureCodes: SignalOpsCoverageMetricV1;
     costEvidence: SignalOpsCoverageMetricV1;
+    // Cost lives on attempts, but spend is read as a window total: this is the share of
+    // in-range operations that actually carry cost evidence. Unknown is never zero.
+    operationCostEvidence: SignalOpsCoverageMetricV1;
     // Operations accepted before the first provider-attempt telemetry are legacy evidence; they
     // stay in totals but are excluded from attempt and failure-taxonomy coverage.
     cohort: { startsAt: string | null; excludedOperations: number };
@@ -530,6 +534,7 @@ export function buildSignalOpsOpsSnapshotV1(input: {
 
   const providerRows = new Map<string, ProviderAccumulator>();
   const totalCosts = new Map<string, SignalOpsCostTotalsV1>();
+  const costedOperations = new Set<string>();
   const timelineState = createTimelineV1(input.range, now);
   const modelAccumulators = new Map<string, ModelAccumulatorV1>();
   const failureAccumulators = new Map<string, SignalOpsFailureSnapshotV1>();
@@ -580,6 +585,7 @@ export function buildSignalOpsOpsSnapshotV1(input: {
     if (durationMs !== null) row.durations.push(durationMs);
     if (event.data.cost) {
       costedTerminalAttempts += 1;
+      costedOperations.add(attempt.operationId);
       addCost(row.costs, event.data.cost.currency, event.data.cost.source, event.data.cost.amount);
       addCost(totalCosts, event.data.cost.currency, event.data.cost.source, event.data.cost.amount);
       addCost(
@@ -658,6 +664,7 @@ export function buildSignalOpsOpsSnapshotV1(input: {
   let stalledOperations = 0;
   let acceptedOperations = 0;
   let operationsWithAttemptTelemetry = 0;
+  let operationsWithCostEvidence = 0;
   const failedByResponsibility: Record<SignalOpsFailureResponsibilityV1, number> = {
     provider: 0,
     platform: 0,
@@ -699,6 +706,7 @@ export function buildSignalOpsOpsSnapshotV1(input: {
       const inCohort = !cohortStartsAt || startedAt >= cohortStartsAt;
       if (state.accepted) acceptedOperations += 1;
       if (state.attempts.size > 0) operationsWithAttemptTelemetry += 1;
+      if (costedOperations.has(operationId)) operationsWithCostEvidence += 1;
       if (inCohort) {
         cohort.operations += 1;
         if (state.attempts.size > 0) cohort.withAttempts += 1;
@@ -853,6 +861,7 @@ export function buildSignalOpsOpsSnapshotV1(input: {
       retryableFailures,
       operationsWithDuration: operationDurations.length,
       operationsWithAttemptTelemetry,
+      operationsWithCostEvidence,
       costByCurrency: costRows(totalCosts),
     },
     coverage: {
@@ -866,6 +875,7 @@ export function buildSignalOpsOpsSnapshotV1(input: {
       failureClassification: coverageMetric(cohort.classified, cohort.failed),
       failureCodes: coverageMetric(cohort.coded, cohort.failed),
       costEvidence: coverageMetric(costedTerminalAttempts, terminalAttempts),
+      operationCostEvidence: coverageMetric(operationsWithCostEvidence, recentOperations.length),
       cohort: { startsAt: cohortStartsAt, excludedOperations: cohort.excluded },
     },
     environments: [...environments].sort(),
