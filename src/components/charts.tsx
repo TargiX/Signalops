@@ -410,7 +410,7 @@ export function PerformanceScatterChart({ data }: { data: ChartProvider[] }) {
             tickLine={false} 
             axisLine={false} 
             tick={{ fill: "var(--mute)", fontSize: 11 }} 
-            domain={[0, 'dataMax + 2']}
+            domain={[0, (dataMax: number) => Math.min(100, Math.ceil(dataMax + 2))]}
           />
           <ZAxis type="number" dataKey="volume" range={[60, 400]} name="Volume" />
           <Tooltip 

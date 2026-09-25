@@ -1,4 +1,8 @@
 import type { StoredSignalOpsEventV1 } from "./event-store.ts";
+import {
+  DEFAULT_SIGNALOPS_STALLED_OPERATION_MINUTES_V1,
+  type SignalOpsOperationStatusV1,
+} from "./ops-snapshot.ts";
 import type {
   SignalOpsAttemptV1,
   SignalOpsCostV1,
@@ -6,7 +10,6 @@ import type {
   SignalOpsFailureV1,
   SignalOpsResourceV1,
   SignalOpsRouteV1,
-  SignalOpsTerminalStatusV1,
 } from "./types.ts";
 
 type OperationEventV1 = Exclude<
@@ -43,7 +46,7 @@ type AttemptStateV1 = {
 export type SignalOpsOperationTraceAttemptV1 = {
   id: string;
   number: number;
-  status: SignalOpsTerminalStatusV1 | "running";
+  status: SignalOpsOperationStatusV1;
   startedAt: string | null;
   terminalAt: string | null;
   durationMs: number | null;
@@ -63,7 +66,7 @@ export type SignalOpsOperationTraceV1 = {
     id: string;
     kind: string;
     logicalModelKey?: string;
-    status: SignalOpsTerminalStatusV1 | "running";
+    status: SignalOpsOperationStatusV1;
     acceptedAt: string | null;
     terminalAt: string | null;
     durationMs: number | null;
@@ -128,7 +131,12 @@ export function buildSignalOpsOperationTraceV1(input: {
   operationId: string;
   records: readonly StoredSignalOpsEventV1[];
   sourceTruncated?: boolean;
+  now?: Date;
 }): SignalOpsOperationTraceV1 | null {
+  const stalledBeforeMs =
+    (input.now ?? new Date()).getTime() - DEFAULT_SIGNALOPS_STALLED_OPERATION_MINUTES_V1 * 60_000;
+  const openStatus = (startedAt: string | null | undefined): SignalOpsOperationStatusV1 =>
+    startedAt && Date.parse(startedAt) <= stalledBeforeMs ? "stalled" : "running";
   const subject = `operation/${input.operationId}`;
   const records = input.records
     .filter(
@@ -209,7 +217,9 @@ export function buildSignalOpsOperationTraceV1(input: {
       return {
         id: state.identity.id,
         number: state.identity.number,
-        status: state.terminal ? state.terminal.data.outcome.status : "running",
+        status: state.terminal
+          ? state.terminal.data.outcome.status
+          : openStatus(state.started?.time),
         startedAt: state.started?.time ?? null,
         terminalAt: state.terminal?.time ?? null,
         durationMs:
@@ -256,7 +266,7 @@ export function buildSignalOpsOperationTraceV1(input: {
       id: input.operationId,
       kind: operationEvent.data.operation.kind,
       logicalModelKey: operationEvent.data.operation.logicalModelKey,
-      status: terminal ? terminal.data.outcome.status : "running",
+      status: terminal ? terminal.data.outcome.status : openStatus(accepted?.time ?? source?.time),
       acceptedAt: accepted?.time ?? null,
       terminalAt: terminal?.time ?? null,
       durationMs:

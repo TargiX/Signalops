@@ -61,6 +61,7 @@ function statusTone(status: string): string {
   if (status === "succeeded") return "bg-emerald-50 text-emerald-700 ring-emerald-200";
   if (status === "running") return "bg-blue-50 text-blue-700 ring-blue-200";
   if (status === "cancelled") return "bg-slate-50 text-slate-700 ring-slate-200";
+  if (status === "stalled") return "bg-amber-50 text-amber-800 ring-amber-200";
   return "bg-rose-50 text-rose-700 ring-rose-200";
 }
 

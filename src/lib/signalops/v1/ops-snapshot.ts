@@ -56,21 +56,30 @@ export type SignalOpsProviderSnapshotV1 = {
   retryableFailures: number;
   p95DurationMs: number | null;
   costByCurrency: SignalOpsCurrencyCostV1[];
-  health: {
-    status: SignalOpsProviderHealthV1;
-    sampleSize: number;
-    failureRate: number | null;
-    p95DurationMs: number | null;
-    windowMinutes: number;
-    policyVersion: string;
-  };
+  health: SignalOpsProviderHealthEvaluationV1;
+  // Same thresholds over the whole selected range. Display-only fallback for low-volume routes;
+  // alerting keeps using the short `health` window.
+  windowHealth: SignalOpsProviderHealthEvaluationV1 & { lowSample: boolean };
 };
+
+export type SignalOpsProviderHealthEvaluationV1 = {
+  status: SignalOpsProviderHealthV1;
+  sampleSize: number;
+  failureRate: number | null;
+  p95DurationMs: number | null;
+  windowMinutes: number;
+  policyVersion: string;
+};
+
+// "stalled" is a projection state, not a terminal outcome: accepted work with no terminal event
+// after the stall threshold. It stays distinct from live "running" work.
+export type SignalOpsOperationStatusV1 = SignalOpsTerminalStatusV1 | "running" | "stalled";
 
 export type SignalOpsOperationSnapshotV1 = {
   operationId: string;
   kind: string;
   logicalModelKey?: string;
-  status: SignalOpsTerminalStatusV1 | "running";
+  status: SignalOpsOperationStatusV1;
   durationMs: number | null;
   attemptCount: number;
   environment: string;
@@ -78,6 +87,7 @@ export type SignalOpsOperationSnapshotV1 = {
   release?: string;
   occurredAt: string;
   failureCategory?: SignalOpsFailureCategoryV1;
+  failureResponsibility?: SignalOpsFailureResponsibilityV1;
   failureCode?: string;
   failureRetryable?: boolean;
 };
@@ -123,7 +133,10 @@ export type SignalOpsProjectionPolicyV1 = {
   criticalFailureRate: number;
   warningP95DurationMs: number;
   criticalP95DurationMs: number;
+  stalledOperationMinutes?: number;
 };
+
+export const DEFAULT_SIGNALOPS_STALLED_OPERATION_MINUTES_V1 = 360;
 
 export const DEFAULT_SIGNALOPS_PROJECTION_POLICY_V1: SignalOpsProjectionPolicyV1 = {
   version: "provider-health-2026-08-23",
@@ -158,6 +171,9 @@ export type SignalOpsOpsSnapshotV1 = {
     attempts: number;
     succeeded: number;
     failed: number;
+    cancelled: number;
+    stalled: number;
+    failedByResponsibility: Record<SignalOpsFailureResponsibilityV1, number>;
     successRate: number | null;
     p95DurationMs: number | null;
     retryableFailures: number;
@@ -173,6 +189,9 @@ export type SignalOpsOpsSnapshotV1 = {
     failureClassification: SignalOpsCoverageMetricV1;
     failureCodes: SignalOpsCoverageMetricV1;
     costEvidence: SignalOpsCoverageMetricV1;
+    // Operations accepted before the first provider-attempt telemetry are legacy evidence; they
+    // stay in totals but are excluded from attempt and failure-taxonomy coverage.
+    cohort: { startsAt: string | null; excludedOperations: number };
   };
   environments: string[];
   timeline: SignalOpsTimelineBucketV1[];
@@ -198,7 +217,7 @@ type AttemptState = {
 
 type ProviderAccumulator = Omit<
   SignalOpsProviderSnapshotV1,
-  "successRate" | "p95DurationMs" | "costByCurrency" | "health"
+  "successRate" | "p95DurationMs" | "costByCurrency" | "health" | "windowHealth"
 > & {
   durations: number[];
   costs: Map<string, SignalOpsCostTotalsV1>;
@@ -342,8 +361,10 @@ function providerHealth(
   row: ProviderAccumulator,
   now: Date,
   policy: SignalOpsProjectionPolicyV1,
-): SignalOpsProviderSnapshotV1["health"] {
-  const windowStart = now.getTime() - policy.providerWindowMinutes * 60 * 1_000;
+  windowMinutes = policy.providerWindowMinutes,
+  minimumSample = policy.minimumProviderSample,
+): SignalOpsProviderHealthEvaluationV1 {
+  const windowStart = now.getTime() - windowMinutes * 60 * 1_000;
   const eligible = row.recentOutcomes.filter(
     (outcome) => Date.parse(outcome.occurredAt) >= windowStart && !outcome.excludedFailure,
   );
@@ -354,7 +375,7 @@ function providerHealth(
   const failureRate = eligible.length === 0 ? null : failed / eligible.length;
   const p95DurationMs = percentile95(durations);
   let status: SignalOpsProviderHealthV1 = "insufficient_data";
-  if (eligible.length >= policy.minimumProviderSample) {
+  if (eligible.length >= minimumSample) {
     if (
       (failureRate ?? 0) >= policy.criticalFailureRate ||
       (p95DurationMs ?? 0) >= policy.criticalP95DurationMs
@@ -374,9 +395,38 @@ function providerHealth(
     sampleSize: eligible.length,
     failureRate,
     p95DurationMs,
-    windowMinutes: policy.providerWindowMinutes,
+    windowMinutes,
     policyVersion: policy.version,
   };
+}
+
+// The status an operator should see: the live window when it has enough traffic, otherwise the
+// selected range as long as it holds at least one provider-attributable outcome.
+export function effectiveProviderHealthV1(
+  provider: Pick<SignalOpsProviderSnapshotV1, "health" | "windowHealth">,
+): SignalOpsProviderHealthEvaluationV1 & { lowSample: boolean; live: boolean } {
+  if (provider.health.status !== "insufficient_data" || !provider.windowHealth) {
+    return { ...provider.health, lowSample: false, live: true };
+  }
+  return { ...provider.windowHealth, live: false };
+}
+
+export function isFailedOperationStatusV1(status: SignalOpsOperationStatusV1): boolean {
+  return status === "failed" || status === "expired" || status === "abandoned";
+}
+
+function attemptInstrumentationStartV1(
+  records: readonly StoredSignalOpsEventV1[],
+  operations: ReadonlyMap<string, OperationState>,
+): string | null {
+  const firstAttempt = records.find(
+    (record) =>
+      record.event.type === "com.signalops.ai.attempt.started.v1" ||
+      record.event.type === "com.signalops.ai.attempt.terminal.v1",
+  )?.event;
+  if (!firstAttempt || firstAttempt.type === "com.signalops.ai.provider.probe.v1") return null;
+  const accepted = operations.get(firstAttempt.data.operation.id)?.accepted?.time;
+  return accepted && accepted < firstAttempt.time ? accepted : firstAttempt.time;
 }
 
 export function buildSignalOpsOpsSnapshotV1(input: {
@@ -396,6 +446,7 @@ export function buildSignalOpsOpsSnapshotV1(input: {
   const policy = input.policy ?? DEFAULT_SIGNALOPS_PROJECTION_POLICY_V1;
   const startMs = Date.parse(rangeStartV1(input.range, now));
   const endMs = now.getTime();
+  const rangeMinutes = (endMs - startMs) / 60_000;
   const lifecycleRecords = input.records
     .filter(
       (record) =>
@@ -514,9 +565,10 @@ export function buildSignalOpsOpsSnapshotV1(input: {
     };
     row.attempts += 1;
     const succeeded = event.data.outcome.status === "succeeded";
+    const cancelledAttempt = event.data.outcome.status === "cancelled";
     if (succeeded) row.succeeded += 1;
-    else row.failed += 1;
-    if (!succeeded) bucket.failedAttempts += 1;
+    else if (!cancelledAttempt) row.failed += 1;
+    if (!succeeded && !cancelledAttempt) bucket.failedAttempts += 1;
     const failure =
       event.data.outcome.status === "failed" ? event.data.outcome.failure : undefined;
     if (failure?.retryable) {
@@ -541,7 +593,8 @@ export function buildSignalOpsOpsSnapshotV1(input: {
       occurredAt: event.time,
       failed: !succeeded,
       durationMs,
-      excludedFailure: Boolean(failure && providerExcludedFailures.has(failure.category)),
+      excludedFailure:
+        cancelledAttempt || Boolean(failure && providerExcludedFailures.has(failure.category)),
     });
     providerRows.set(providerId, row);
   }
@@ -571,19 +624,27 @@ export function buildSignalOpsOpsSnapshotV1(input: {
   }
 
   const providers = [...providerRows.values()]
-    .map((row): SignalOpsProviderSnapshotV1 => ({
+    .map((row): SignalOpsProviderSnapshotV1 => {
+      const windowHealth = providerHealth(row, now, policy, rangeMinutes, 1);
+      return {
       providerKey: row.providerKey,
       providerVendor: row.providerVendor,
       modelKey: row.modelKey,
       attempts: row.attempts,
       succeeded: row.succeeded,
       failed: row.failed,
-      successRate: row.attempts === 0 ? null : row.succeeded / row.attempts,
+      successRate:
+        row.succeeded + row.failed === 0 ? null : row.succeeded / (row.succeeded + row.failed),
       retryableFailures: row.retryableFailures,
       p95DurationMs: percentile95(row.durations),
       costByCurrency: costRows(row.costs),
       health: providerHealth(row, now, policy),
-    }))
+      windowHealth: {
+        ...windowHealth,
+        lowSample: windowHealth.sampleSize < policy.minimumProviderSample,
+      },
+      };
+    })
     .sort(
       (left, right) =>
         right.attempts - left.attempts ||
@@ -593,10 +654,29 @@ export function buildSignalOpsOpsSnapshotV1(input: {
 
   let succeededOperations = 0;
   let failedOperations = 0;
+  let cancelledOperations = 0;
+  let stalledOperations = 0;
   let acceptedOperations = 0;
-  let classifiedOperationFailures = 0;
-  let codedOperationFailures = 0;
   let operationsWithAttemptTelemetry = 0;
+  const failedByResponsibility: Record<SignalOpsFailureResponsibilityV1, number> = {
+    provider: 0,
+    platform: 0,
+    client: 0,
+    customer: 0,
+    unknown: 0,
+  };
+  const stalledBeforeMs =
+    now.getTime() -
+    (policy.stalledOperationMinutes ?? DEFAULT_SIGNALOPS_STALLED_OPERATION_MINUTES_V1) * 60_000;
+  const cohortStartsAt = attemptInstrumentationStartV1(lifecycleRecords, operations);
+  const cohort = {
+    operations: 0,
+    excluded: 0,
+    withAttempts: 0,
+    failed: 0,
+    classified: 0,
+    coded: 0,
+  };
   const operationDurations: number[] = [];
   const recentOperations = [...operations.entries()]
     .flatMap(([operationId, state]): SignalOpsOperationSnapshotV1[] => {
@@ -607,20 +687,31 @@ export function buildSignalOpsOpsSnapshotV1(input: {
       const durationMs = terminal
         ? explicitDuration ?? durationBetween(state.accepted?.time, terminal.time)
         : null;
-      const operationBucket = timelineBucketV1(
-        timelineState,
-        state.accepted?.time ?? state.source?.time ?? event.time,
-      );
+      const startedAt = state.accepted?.time ?? state.source?.time ?? event.time;
+      const operationBucket = timelineBucketV1(timelineState, startedAt);
       if (!operationBucket) return [];
+      const status: SignalOpsOperationStatusV1 = terminal
+        ? terminal.data.outcome.status
+        : Date.parse(startedAt) <= stalledBeforeMs
+          ? "stalled"
+          : "running";
+      const failed = isFailedOperationStatusV1(status);
+      const inCohort = !cohortStartsAt || startedAt >= cohortStartsAt;
       if (state.accepted) acceptedOperations += 1;
       if (state.attempts.size > 0) operationsWithAttemptTelemetry += 1;
-      if (terminal?.data.outcome.status === "succeeded") succeededOperations += 1;
-      else if (terminal) failedOperations += 1;
+      if (inCohort) {
+        cohort.operations += 1;
+        if (state.attempts.size > 0) cohort.withAttempts += 1;
+      } else {
+        cohort.excluded += 1;
+      }
+      if (status === "succeeded") succeededOperations += 1;
+      else if (status === "cancelled") cancelledOperations += 1;
+      else if (status === "stalled") stalledOperations += 1;
+      else if (failed) failedOperations += 1;
       if (durationMs !== null) operationDurations.push(durationMs);
       operationBucket.operations += 1;
-      if (terminal && terminal.data.outcome.status !== "succeeded") {
-        operationBucket.failedOperations += 1;
-      }
+      if (failed) operationBucket.failedOperations += 1;
       if (durationMs !== null) operationBucket.durations.push(durationMs);
 
       const modelKey =
@@ -633,8 +724,8 @@ export function buildSignalOpsOpsSnapshotV1(input: {
         durations: [],
       };
       model.operations += 1;
-      if (terminal?.data.outcome.status === "succeeded") model.succeeded += 1;
-      else if (terminal) model.failed += 1;
+      if (status === "succeeded") model.succeeded += 1;
+      else if (failed) model.failed += 1;
       if (durationMs !== null) model.durations.push(durationMs);
       modelAccumulators.set(modelKey, model);
 
@@ -642,11 +733,15 @@ export function buildSignalOpsOpsSnapshotV1(input: {
         terminal && terminal.data.outcome.status !== "succeeded"
           ? terminal.data.outcome.failure
           : undefined;
-      if (terminal && terminal.data.outcome.status !== "succeeded") {
+      if (failed) {
         const category = failure?.category ?? "unknown";
         const responsibility = failure?.responsibility ?? "unknown";
-        if (category !== "unknown") classifiedOperationFailures += 1;
-        if (failure?.code) codedOperationFailures += 1;
+        failedByResponsibility[responsibility] += 1;
+        if (inCohort) {
+          cohort.failed += 1;
+          if (category !== "unknown") cohort.classified += 1;
+          if (failure?.code) cohort.coded += 1;
+        }
         const failureKey = `${category}\u0000${responsibility}`;
         const failureRow = failureAccumulators.get(failureKey) ?? {
           category,
@@ -663,7 +758,7 @@ export function buildSignalOpsOpsSnapshotV1(input: {
         operationId,
         kind: event.data.operation.kind,
         logicalModelKey: event.data.operation.logicalModelKey,
-        status: terminal ? terminal.data.outcome.status : "running",
+        status,
         durationMs,
         attemptCount: terminal?.data.metrics?.attemptCount ?? state.attempts.size,
         environment: event.data.resource.environment,
@@ -671,6 +766,7 @@ export function buildSignalOpsOpsSnapshotV1(input: {
         release: event.data.resource.release,
         occurredAt: terminal?.time ?? state.accepted?.time ?? event.time,
         failureCategory: failure?.category,
+        failureResponsibility: failure?.responsibility,
         failureCode: failure?.code,
         failureRetryable: failure?.retryable,
       }];
@@ -682,7 +778,7 @@ export function buildSignalOpsOpsSnapshotV1(input: {
     (latest, record) => (!latest || record.receivedAt > latest ? record.receivedAt : latest),
     null,
   );
-  const terminalOperations = succeededOperations + failedOperations;
+  const decidedOperations = succeededOperations + failedOperations;
   const truncated = input.sourceTruncated ?? false;
   const idempotencyConflicts = input.idempotencyConflictCount ?? 0;
   const timeline: SignalOpsTimelineBucketV1[] = timelineState.buckets.map(
@@ -748,8 +844,11 @@ export function buildSignalOpsOpsSnapshotV1(input: {
       attempts: includedAttempts,
       succeeded: succeededOperations,
       failed: failedOperations,
+      cancelled: cancelledOperations,
+      stalled: stalledOperations,
+      failedByResponsibility,
       successRate:
-        terminalOperations === 0 ? null : succeededOperations / terminalOperations,
+        decidedOperations === 0 ? null : succeededOperations / decidedOperations,
       p95DurationMs: percentile95(operationDurations),
       retryableFailures,
       operationsWithDuration: operationDurations.length,
@@ -758,18 +857,16 @@ export function buildSignalOpsOpsSnapshotV1(input: {
     },
     coverage: {
       operationAcceptance: coverageMetric(acceptedOperations, recentOperations.length),
-      operationCompletion: coverageMetric(terminalOperations, recentOperations.length),
-      providerAttempts: coverageMetric(
-        operationsWithAttemptTelemetry,
+      operationCompletion: coverageMetric(
+        decidedOperations + cancelledOperations,
         recentOperations.length,
       ),
+      providerAttempts: coverageMetric(cohort.withAttempts, cohort.operations),
       attemptLifecycle: coverageMetric(pairedAttempts, includedAttempts),
-      failureClassification: coverageMetric(
-        classifiedOperationFailures,
-        failedOperations,
-      ),
-      failureCodes: coverageMetric(codedOperationFailures, failedOperations),
+      failureClassification: coverageMetric(cohort.classified, cohort.failed),
+      failureCodes: coverageMetric(cohort.coded, cohort.failed),
       costEvidence: coverageMetric(costedTerminalAttempts, terminalAttempts),
+      cohort: { startsAt: cohortStartsAt, excludedOperations: cohort.excluded },
     },
     environments: [...environments].sort(),
     timeline,
@@ -778,7 +875,7 @@ export function buildSignalOpsOpsSnapshotV1(input: {
     failureBreakdown,
     recentOperations: recentOperations.slice(0, 50),
     recentFailedOperations: recentOperations
-      .filter((operation) => operation.status !== "succeeded" && operation.status !== "running")
+      .filter((operation) => isFailedOperationStatusV1(operation.status))
       .slice(0, 50),
   };
 }

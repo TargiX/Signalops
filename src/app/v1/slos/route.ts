@@ -15,7 +15,7 @@ import {
   SignalOpsRateLimitErrorV1,
 } from "@/lib/signalops/v1/rate-limit";
 import {
-  evaluateSignalOpsSloPoliciesV1,
+  evaluateSignalOpsSloPoliciesAdaptiveV1,
   listSignalOpsSloPoliciesV1,
   updateSignalOpsSloPolicyV1,
 } from "@/lib/signalops/v1/slo";
@@ -30,15 +30,14 @@ function json(body: unknown, status = 200, headers: Record<string, string> = {})
 }
 
 async function readEvaluation(tenantId: string, tenantName: string) {
-  const [snapshot, policies] = await Promise.all([
-    getSignalOpsOpsSnapshotV1({ tenantId, tenantName, range: "24h" }),
-    listSignalOpsSloPoliciesV1(tenantId),
-  ]);
-  return {
+  const now = new Date();
+  const policies = await listSignalOpsSloPoliciesV1(tenantId);
+  const evaluations = await evaluateSignalOpsSloPoliciesAdaptiveV1({
     policies,
-    evaluations: evaluateSignalOpsSloPoliciesV1({ snapshot, policies }),
-    generatedAt: snapshot.generatedAt,
-  };
+    now,
+    loadSnapshot: (range) => getSignalOpsOpsSnapshotV1({ tenantId, tenantName, range, now }),
+  });
+  return { policies, evaluations, generatedAt: now.toISOString() };
 }
 
 export async function GET(request: Request) {
