@@ -10,7 +10,6 @@ import type {
   SignalOpsFailureV1,
   SignalOpsResourceV1,
   SignalOpsRouteV1,
-  SignalOpsTerminalStatusV1,
 } from "./types.ts";
 
 type OperationEventV1 = Exclude<
