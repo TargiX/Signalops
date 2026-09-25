@@ -74,6 +74,8 @@ assert.deepEqual(snapshot.coverage.attemptLifecycle, { observed: 0, total: 1, ra
 assert.deepEqual(snapshot.coverage.failureClassification, { observed: 0, total: 0, ratio: null });
 assert.deepEqual(snapshot.coverage.failureCodes, { observed: 0, total: 0, ratio: null });
 assert.deepEqual(snapshot.coverage.costEvidence, { observed: 1, total: 1, ratio: 1 });
+assert.equal(snapshot.totals.operationsWithCostEvidence, 1);
+assert.deepEqual(snapshot.coverage.operationCostEvidence, { observed: 1, total: 1, ratio: 1 });
 assert.deepEqual(snapshot.failureBreakdown, []);
 assert.equal(snapshot.providers[0].providerKey, attemptTerminal.data.route.providerKey);
 assert.equal(snapshot.providers[0].p95DurationMs, attemptTerminal.data.metrics.durationMs);
@@ -130,6 +132,8 @@ const failedSnapshot = buildSignalOpsOpsSnapshotV1({
 });
 assert.equal(failedSnapshot.totals.failed, 1);
 assert.equal(failedSnapshot.totals.operationsWithAttemptTelemetry, 0);
+assert.equal(failedSnapshot.totals.operationsWithCostEvidence, 0);
+assert.deepEqual(failedSnapshot.coverage.operationCostEvidence, { observed: 0, total: 1, ratio: 0 });
 assert.deepEqual(failedSnapshot.coverage.failureClassification, {
   observed: 1,
   total: 1,
@@ -161,6 +165,50 @@ assert.deepEqual(
     failureCode: failedTerminal.data.outcome.failure.code,
     failureRetryable: failedTerminal.data.outcome.failure.retryable,
   }],
+);
+
+// Spend must not read as a complete window total when part of the window carries no cost
+// evidence: an operation whose attempt terminal has no cost is unknown, never $0.
+const uncostedAccepted = structuredClone(accepted);
+const uncostedAttemptTerminal = structuredClone(attemptTerminal);
+const uncostedOperationTerminal = structuredClone(operationTerminal);
+uncostedAccepted.id = "evt-uncosted-accepted";
+uncostedAccepted.time = "2026-08-23T05:00:00.000Z";
+uncostedAccepted.data.operation.id = "op-uncosted";
+uncostedAttemptTerminal.id = "evt-uncosted-attempt-terminal";
+uncostedAttemptTerminal.time = "2026-08-23T05:00:04.000Z";
+uncostedAttemptTerminal.data.operation.id = "op-uncosted";
+uncostedAttemptTerminal.data.attempt.id = "attempt-uncosted";
+delete uncostedAttemptTerminal.data.cost;
+uncostedOperationTerminal.id = "evt-uncosted-operation-terminal";
+uncostedOperationTerminal.time = "2026-08-23T05:00:05.000Z";
+uncostedOperationTerminal.data.operation.id = "op-uncosted";
+const mixedSnapshot = buildSignalOpsOpsSnapshotV1({
+  tenantId,
+  range: "24h",
+  now: new Date("2026-08-23T12:00:00.000Z"),
+  records: [
+    accepted,
+    attemptTerminal,
+    operationTerminal,
+    uncostedAccepted,
+    uncostedAttemptTerminal,
+    uncostedOperationTerminal,
+  ].map((event, index) => ({
+    tenantId,
+    event,
+    payloadDigest: `mixed-${index}`,
+    receivedAt,
+  })),
+});
+assert.equal(mixedSnapshot.totals.operations, 2);
+assert.equal(mixedSnapshot.totals.operationsWithCostEvidence, 1);
+assert.deepEqual(mixedSnapshot.coverage.costEvidence, { observed: 1, total: 2, ratio: 0.5 });
+assert.deepEqual(mixedSnapshot.coverage.operationCostEvidence, { observed: 1, total: 2, ratio: 0.5 });
+assert.deepEqual(
+  mixedSnapshot.totals.costByCurrency,
+  snapshot.totals.costByCurrency,
+  "An operation without cost evidence must not contribute a zero-valued cost row.",
 );
 
 for (const [range, expectedBuckets] of [
@@ -210,6 +258,8 @@ assert.equal(boundarySnapshot.totals.events, 2);
 assert.equal(boundarySnapshot.totals.operations, 0);
 assert.equal(boundarySnapshot.totals.attempts, 0);
 assert.equal(boundarySnapshot.totals.operationsWithAttemptTelemetry, 0);
+assert.equal(boundarySnapshot.totals.operationsWithCostEvidence, 0);
+assert.deepEqual(boundarySnapshot.coverage.operationCostEvidence, { observed: 0, total: 0, ratio: null });
 assert.equal(boundarySnapshot.totals.succeeded, 0);
 assert.deepEqual(boundarySnapshot.totals.costByCurrency, []);
 assert.deepEqual(boundarySnapshot.providers, []);

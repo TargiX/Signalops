@@ -1491,6 +1491,16 @@ export function LiveCockpit() {
   );
   const attemptCoverage = snapshot.coverage.providerAttempts.ratio;
   const coverageCohort = snapshot.coverage.cohort;
+  const costCoverage = snapshot.coverage.operationCostEvidence;
+  const unknownCostOperations = Math.max(0, costCoverage.total - costCoverage.observed);
+  const spendTotalLabel =
+    costCoverage.ratio !== null && costCoverage.ratio < 1 ? "Known spend" : "Total spend";
+  const costCoverageNote =
+    costCoverage.total === 0
+      ? null
+      : unknownCostOperations === 0
+        ? `Cost evidence on all ${formatNumber(costCoverage.total)} operations in this window.`
+        : `Cost evidence on ${formatNumber(costCoverage.observed)} of ${formatNumber(costCoverage.total)} operations. Cost is unknown for ${formatNumber(unknownCostOperations)} operation${unknownCostOperations === 1 ? "" : "s"}, which ${unknownCostOperations === 1 ? "is" : "are"} excluded from this total rather than counted as $0.`;
   const coverageCohortNote =
     coverageCohort.startsAt && coverageCohort.excludedOperations > 0
       ? `${formatNumber(coverageCohort.excludedOperations)} operation${coverageCohort.excludedOperations === 1 ? "" : "s"} accepted before attempt telemetry began (${timelineLabel(coverageCohort.startsAt, "30d")} UTC) are excluded from attempt and failure-taxonomy coverage.`
@@ -1993,7 +2003,7 @@ export function LiveCockpit() {
           <Metric icon={TriangleAlert} label="Failed" value={formatNumber(snapshot.totals.failed)} detail={`${formatNumber(providerFailures)} provider/system · ${formatNumber(customerFailures)} content/input →`} tone="bad" active={operationFilter === "failed"} onClick={() => activateOperationFilter("failed")} />
           <Metric icon={Clock3} label="Operation p95" value={formatDuration(snapshot.totals.p95DurationMs)} detail="terminal duration" />
           <Metric icon={Activity} label="Provider coverage" value={formatPercent(attemptCoverage)} detail={`${formatNumber(snapshot.coverage.providerAttempts.observed)} / ${formatNumber(snapshot.coverage.providerAttempts.total)} operations${coverageCohort.excludedOperations > 0 ? ` · ${formatNumber(coverageCohort.excludedOperations)} legacy` : ""}`} tone="warn" />
-          <Metric icon={DollarSign} label="Reported cost" value={costSummary(snapshot.totals.costByCurrency, "reported")} detail={`${costSummary(snapshot.totals.costByCurrency, "estimated")} estimated`} />
+          <Metric icon={DollarSign} label="Reported cost" value={costSummary(snapshot.totals.costByCurrency, "reported")} detail={`${costSummary(snapshot.totals.costByCurrency, "estimated")} estimated · cost on ${formatNumber(costCoverage.observed)}/${formatNumber(costCoverage.total)} operations`} tone={unknownCostOperations > 0 ? "warn" : "neutral"} />
         </section>
 
         <AnalysisGroup
@@ -2028,10 +2038,16 @@ export function LiveCockpit() {
               <SpendDonutChart
                 data={spendProviderData}
                 currency={selectedChartCost.currency}
+                totalLabel={spendTotalLabel}
               />
             ) : (
               <EmptyState text="Spend distribution needs one live currency and positive cost evidence." />
             )}
+            {costCoverageNote ? (
+              <p className="mt-4 border-t border-[var(--border)] pt-3 text-[10px] leading-relaxed text-[var(--text-dim)]">
+                {costCoverageNote}
+              </p>
+            ) : null}
           </Panel>
           <Panel
             title="Performance matrix"
@@ -2148,7 +2164,8 @@ export function LiveCockpit() {
               <CoverageRow label="Paired attempt lifecycle" metric={snapshot.coverage.attemptLifecycle} />
               <CoverageRow label="Failure taxonomy" metric={snapshot.coverage.failureClassification} />
               <CoverageRow label="Failure codes" metric={snapshot.coverage.failureCodes} />
-              <CoverageRow label="Cost evidence" metric={snapshot.coverage.costEvidence} />
+              <CoverageRow label="Cost evidence (attempts)" metric={snapshot.coverage.costEvidence} />
+              <CoverageRow label="Cost evidence (operations)" metric={snapshot.coverage.operationCostEvidence} />
             </div>
             <p className="mt-5 rounded-lg border border-blue-100 bg-blue-50/70 px-3 py-2.5 text-[10px] leading-4 text-blue-900">
               These ratios describe what producers actually emitted. Logical model labels do not count as provider-route evidence, and catalog prices do not count as reported billing.

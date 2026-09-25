@@ -45,6 +45,8 @@ function isMatchingSnapshot(
     Array.isArray(row.snapshot?.recentFailedOperations) &&
     Number.isFinite(row.snapshot?.totals?.operationsWithDuration) &&
     Number.isFinite(row.snapshot?.totals?.operationsWithAttemptTelemetry) &&
+    Number.isFinite(row.snapshot?.totals?.operationsWithCostEvidence) &&
+    Number.isFinite(row.snapshot?.coverage?.operationCostEvidence?.observed) &&
     Number.isFinite(row.snapshot?.totals?.cancelled) &&
     Number.isFinite(row.snapshot?.totals?.stalled) &&
     row.snapshot?.coverage?.cohort !== undefined &&

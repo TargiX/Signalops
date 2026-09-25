@@ -605,7 +605,7 @@ const snapshotFixture = {
   freshness: { lastEventAt: "2026-08-24T11:59:00.000Z", lastReceivedAt: "2026-08-24T11:59:01.000Z" },
   projection: { materialized: true, checkpointReceivedAt: "2026-08-24T11:59:02.000Z", sourceEventCount: 12 },
   dataQuality: { complete: true, truncated: false, contradictoryTerminals: 0, identityCollisions: 0, idempotencyConflicts: 0 },
-  totals: { events: 12, operations: 3, attempts: 4, succeeded: 2, failed: 1, successRate: 2 / 3, p95DurationMs: 9_500, retryableFailures: 1, operationsWithDuration: 3, operationsWithAttemptTelemetry: 2, costByCurrency: [] },
+  totals: { events: 12, operations: 3, attempts: 4, succeeded: 2, failed: 1, successRate: 2 / 3, p95DurationMs: 9_500, retryableFailures: 1, operationsWithDuration: 3, operationsWithAttemptTelemetry: 2, operationsWithCostEvidence: 0, costByCurrency: [] },
   coverage: {
     operationAcceptance: { observed: 3, total: 3, ratio: 1 },
     operationCompletion: { observed: 3, total: 3, ratio: 1 },
@@ -614,6 +614,7 @@ const snapshotFixture = {
     failureClassification: { observed: 1, total: 1, ratio: 1 },
     failureCodes: { observed: 1, total: 1, ratio: 1 },
     costEvidence: { observed: 0, total: 4, ratio: 0 },
+    operationCostEvidence: { observed: 0, total: 3, ratio: 0 },
   },
   environments: ["production"],
   timeline: timelineFixture,
