@@ -7,6 +7,7 @@ export const SIGNALOPS_V1_EVENT_TYPES = [
   "com.signalops.ai.attempt.started.v1",
   "com.signalops.ai.attempt.terminal.v1",
   "com.signalops.ai.provider.probe.v1",
+  "com.signalops.ai.cost.reconciliation.v1",
 ] as const;
 
 export type SignalOpsEventTypeV1 = (typeof SIGNALOPS_V1_EVENT_TYPES)[number];
@@ -168,6 +169,53 @@ export type SignalOpsProviderProbeDataV1 = {
   attributes?: SignalOpsAttributesV1;
 };
 
+export type SignalOpsReconciliationScopeV1 = "provider_period" | "route_period";
+
+export type SignalOpsReconciliationProviderV1 = {
+  providerKey: string;
+  providerVendor: string;
+};
+
+export type SignalOpsReconciliationPeriodV1 = {
+  start: string;
+  end: string;
+};
+
+export type SignalOpsReconciliationBasisV1 = {
+  billSource: string;
+  billReference?: string;
+  units?: number;
+  unit?: string;
+  unitPrice?: number;
+};
+
+export type SignalOpsReconciliationCostV1 = {
+  amount: string;
+  currency: string;
+  source: "billing_reconciled";
+};
+
+export type SignalOpsCostReconciliationDataV1 =
+  | {
+      scope: "provider_period";
+      provider: SignalOpsReconciliationProviderV1;
+      period: SignalOpsReconciliationPeriodV1;
+      cost: SignalOpsReconciliationCostV1;
+      basis: SignalOpsReconciliationBasisV1;
+      resource: SignalOpsResourceV1;
+      attributes?: SignalOpsAttributesV1;
+    }
+  | {
+      scope: "route_period";
+      provider: SignalOpsReconciliationProviderV1;
+      period: SignalOpsReconciliationPeriodV1;
+      cost: SignalOpsReconciliationCostV1;
+      basis: SignalOpsReconciliationBasisV1;
+      route: SignalOpsRouteV1;
+      resource: SignalOpsResourceV1;
+      attributes?: SignalOpsAttributesV1;
+    };
+
 type SignalOpsEventEnvelopeV1<TType extends SignalOpsEventTypeV1, TData> = {
   specversion: "1.0";
   id: string;
@@ -201,6 +249,10 @@ export type SignalOpsEventV1 =
   | SignalOpsEventEnvelopeV1<
       "com.signalops.ai.provider.probe.v1",
       SignalOpsProviderProbeDataV1
+    >
+  | SignalOpsEventEnvelopeV1<
+      "com.signalops.ai.cost.reconciliation.v1",
+      SignalOpsCostReconciliationDataV1
     >;
 
 export type SignalOpsContractIssueV1 = {

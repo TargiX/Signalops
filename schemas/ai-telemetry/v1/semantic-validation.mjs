@@ -21,6 +21,11 @@ export function validateSignalOpsEventSemanticsV1(input) {
     if (route && typeof route.providerKey === "string") {
       expectedSubject = `provider/${route.providerKey}`;
     }
+  } else if (input.type === "com.signalops.ai.cost.reconciliation.v1") {
+    const provider = isRecord(data.provider) ? data.provider : undefined;
+    if (provider && typeof provider.providerKey === "string") {
+      expectedSubject = `provider/${provider.providerKey}`;
+    }
   } else if (input.type.startsWith("com.signalops.ai.")) {
     const operation = isRecord(data.operation) ? data.operation : undefined;
     if (operation && typeof operation.id === "string") {

@@ -616,6 +616,7 @@ const snapshotFixture = {
     costEvidence: { observed: 0, total: 4, ratio: 0 },
     operationCostEvidence: { observed: 0, total: 3, ratio: 0 },
   },
+  reconciliation: { lastReconciledAt: null, currencies: [], periods: [] },
   environments: ["production"],
   timeline: timelineFixture,
   providers: [],

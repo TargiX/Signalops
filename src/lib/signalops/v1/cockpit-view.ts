@@ -770,6 +770,16 @@ export function buildSignalOpsCockpitBriefV1(
     `- Explicit attempt coverage: ${percentTextV1(attemptCoverage)}`,
     `- Failure classification coverage: ${percentTextV1(snapshot.coverage.failureClassification.ratio)}`,
     `- Cost evidence coverage: ${percentTextV1(costCoverage.ratio)} (${costCoverage.observed}/${costCoverage.total} operations)`,
+    ...(snapshot.reconciliation.currencies.length > 0
+      ? [
+          `- Billing reconciliation: ${snapshot.reconciliation.currencies
+            .map(
+              (row) =>
+                `${row.currency} billed ${row.billed.toFixed(2)} vs estimated ${row.estimated.toFixed(2)} (delta ${row.delta.toFixed(2)})`,
+            )
+            .join(", ")}; last reconciled ${snapshot.reconciliation.lastReconciledAt ?? "unknown"}`,
+        ]
+      : []),
     `- Retained view: ${retainedMatches} matches across ${indexedRows} indexed rows`,
     `- Filters: ${filters.length > 0 ? filters.map(markdownCodeV1).join(", ") : "none"}`,
     "",

@@ -430,4 +430,82 @@ const effective = effectiveProviderHealthV1(quietRoute);
 assert.equal(effective.live, false);
 assert.equal(effective.status, quietRoute.windowHealth.status);
 
+// Reconciliation events are immutable observations of provider-billed money. They MUST NOT
+// synthesize operations or attempts, MUST NOT alter coverage, MUST NOT enter attempt-derived
+// `costByCurrency`, and MUST populate the dedicated `reconciliation` block with the matching
+// attempt-terminal estimated cost for the same providerKey and `[start, end)` window.
+const reconciliation = await fixture("cost-reconciliation");
+const reconciliationRoute = await fixture("cost-reconciliation-route-period");
+const reconciliationRecords = [
+  ...records,
+  {
+    tenantId,
+    receivedAt,
+    event: structuredClone(reconciliation),
+  },
+  {
+    tenantId,
+    receivedAt,
+    event: structuredClone(reconciliationRoute),
+  },
+];
+const reconciliationSnapshot = buildSignalOpsOpsSnapshotV1({
+  tenantId,
+  tenantName: "Phosphene",
+  range: "24h",
+  records: reconciliationRecords,
+  now: new Date("2026-08-23T12:00:00.000Z"),
+});
+assert.equal(
+  reconciliationSnapshot.totals.operations,
+  1,
+  "Reconciliation events must not synthesize operations.",
+);
+assert.equal(
+  reconciliationSnapshot.totals.attempts,
+  1,
+  "Reconciliation events must not synthesize attempts.",
+);
+assert.equal(
+  reconciliationSnapshot.totals.events,
+  5,
+  "Reconciliation events are observed in `totals.events` without becoming operations/attempts.",
+);
+assert.equal(
+  reconciliationSnapshot.coverage.providerAttempts.observed,
+  1,
+  "Coverage must not count reconciliation events as provider attempts.",
+);
+assert.equal(
+  reconciliationSnapshot.coverage.attemptLifecycle.observed,
+  0,
+  "Coverage must not count reconciliation events as attempt lifecycle.",
+);
+assert.deepEqual(
+  reconciliationSnapshot.coverage.operationCostEvidence,
+  { observed: 1, total: 1, ratio: 1 },
+  "Coverage must be unaffected by reconciliation events.",
+);
+assert.deepEqual(
+  reconciliationSnapshot.totals.costByCurrency,
+  [{ currency: "USD", provider_reported: 0, catalog_estimate: 0.053, billing_reconciled: 0 }],
+  "Reconciliation cost must never enter attempt-derived `costByCurrency`.",
+);
+assert.equal(
+  reconciliationSnapshot.reconciliation.lastReconciledAt,
+  reconciliationRoute.time,
+);
+assert.deepEqual(
+  reconciliationSnapshot.reconciliation.currencies.map((row) => row.currency).sort(),
+  ["USD"],
+);
+assert.equal(reconciliationSnapshot.reconciliation.periods.length, 2);
+const providerPeriod = reconciliationSnapshot.reconciliation.periods.find(
+  (row) => row.billSource === "fal.models.usage" && row.providerKey === "primary-fal",
+);
+assert.ok(providerPeriod);
+assert.equal(providerPeriod.billed, 0.105);
+assert.equal(providerPeriod.estimated, 0.053, "Estimated = sum of attempt-terminal costs in window.");
+assert.equal(providerPeriod.delta, 0.105 - 0.053);
+
 console.log("signalops ops v1 checks passed");

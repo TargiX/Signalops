@@ -54,6 +54,9 @@ function isMatchingSnapshot(
     row.snapshot.providers.every((provider) => provider?.windowHealth !== undefined) &&
     Number.isFinite(row.snapshot?.coverage?.attemptLifecycle?.observed) &&
     Array.isArray(row.snapshot?.failureBreakdown) &&
+    row.snapshot.reconciliation !== undefined &&
+    Array.isArray(row.snapshot.reconciliation.currencies) &&
+    Array.isArray(row.snapshot.reconciliation.periods) &&
     Date.parse(row.projected_at) >= now.getTime() - 60_000
   );
 }
