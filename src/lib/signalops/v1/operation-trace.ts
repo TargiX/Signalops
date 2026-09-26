@@ -14,7 +14,8 @@ import type {
 
 type OperationEventV1 = Exclude<
   SignalOpsEventV1,
-  { type: "com.signalops.ai.provider.probe.v1" }
+  | { type: "com.signalops.ai.provider.probe.v1" }
+  | { type: "com.signalops.ai.cost.reconciliation.v1" }
 >;
 
 type OperationAcceptedEventV1 = Extract<

@@ -32,14 +32,15 @@
         "com.signalops.ai.operation.terminal.v1",
         "com.signalops.ai.attempt.started.v1",
         "com.signalops.ai.attempt.terminal.v1",
-        "com.signalops.ai.provider.probe.v1"
+        "com.signalops.ai.provider.probe.v1",
+        "com.signalops.ai.cost.reconciliation.v1"
       ]
     },
     "subject": {
       "type": "string",
       "maxLength": 180,
       "pattern": "^(operation|provider)/[A-Za-z0-9][A-Za-z0-9._:/-]*$",
-      "description": "Must exactly identify data.operation.id or, for probes, data.route.providerKey; the portable semantic validator enforces the cross-field equality."
+      "description": "Must exactly identify data.operation.id, or for probes and reconciliation events data.route.providerKey / data.provider.providerKey; the portable semantic validator enforces the cross-field equality."
     },
     "time": { "$ref": "#/$defs/timestamp" },
     "datacontenttype": { "const": "application/json" },
@@ -109,6 +110,18 @@
         "properties": {
           "subject": { "type": "string", "pattern": "^provider/" },
           "data": { "$ref": "#/$defs/providerProbeData" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "type": { "const": "com.signalops.ai.cost.reconciliation.v1" } },
+        "required": ["type"]
+      },
+      "then": {
+        "properties": {
+          "subject": { "type": "string", "pattern": "^provider/" },
+          "data": { "$ref": "#/$defs/costReconciliationData" }
         }
       }
     }
@@ -277,16 +290,17 @@
       "additionalProperties": false,
       "required": ["amount", "currency", "source"],
       "properties": {
-        "amount": {
-          "type": "string",
-          "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]{1,12})?$",
-          "maxLength": 40
-        },
+        "amount": { "$ref": "#/$defs/decimalString" },
         "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
         "source": {
           "enum": ["provider_reported", "catalog_estimate", "billing_reconciled"]
         }
       }
+    },
+    "decimalString": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]{1,12})?$",
+      "maxLength": 40
     },
     "resource": {
       "type": "object",
@@ -416,6 +430,84 @@
         "resource": { "$ref": "#/$defs/resource" },
         "attributes": { "$ref": "#/$defs/attributes" }
       }
+    },
+    "billingReconciledCost": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency", "source"],
+      "properties": {
+        "amount": { "$ref": "#/$defs/decimalString" },
+        "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+        "source": { "const": "billing_reconciled" }
+      }
+    },
+    "reconciliationPeriod": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start", "end"],
+      "properties": {
+        "start": { "$ref": "#/$defs/timestamp" },
+        "end": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "reconciliationBasis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["billSource"],
+      "properties": {
+        "billSource": { "$ref": "#/$defs/identifier" },
+        "billReference": { "$ref": "#/$defs/identifier" },
+        "units": { "type": "number", "minimum": 0 },
+        "unit": { "$ref": "#/$defs/identifier" },
+        "unitPrice": { "type": "number", "minimum": 0 }
+      }
+    },
+    "reconciliationProvider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["providerKey", "providerVendor"],
+      "properties": {
+        "providerKey": { "$ref": "#/$defs/identifier" },
+        "providerVendor": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "costReconciliationData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scope", "provider", "period", "cost", "basis", "resource"],
+      "properties": {
+        "scope": { "enum": ["provider_period", "route_period"] },
+        "provider": { "$ref": "#/$defs/reconciliationProvider" },
+        "period": { "$ref": "#/$defs/reconciliationPeriod" },
+        "cost": { "$ref": "#/$defs/billingReconciledCost" },
+        "basis": { "$ref": "#/$defs/reconciliationBasis" },
+        "route": { "$ref": "#/$defs/route" },
+        "resource": { "$ref": "#/$defs/resource" },
+        "attributes": { "$ref": "#/$defs/attributes" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "scope": { "const": "route_period" } },
+            "required": ["scope"]
+          },
+          "then": {
+            "required": ["route"],
+            "properties": { "route": { "$ref": "#/$defs/route" } }
+          }
+        },
+        {
+          "if": {
+            "properties": { "scope": { "const": "provider_period" } },
+            "required": ["scope"]
+          },
+          "then": {
+            "required": [],
+            "properties": {},
+            "not": { "required": ["route"] }
+          }
+        }
+      ]
     }
   }
 }

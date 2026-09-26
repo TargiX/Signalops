@@ -2074,6 +2074,51 @@ export function LiveCockpit() {
           </Panel>
         </section>
 
+        <section className="mt-4">
+          <Panel
+            title="Billing reconciliation"
+            subtitle={
+              snapshot.reconciliation.periods.length === 0
+                ? "No provider billing evidence in this window yet"
+                : "Billed money from provider billing APIs vs attempt-level estimates for the same periods"
+            }
+          >
+            {snapshot.reconciliation.periods.length === 0 ? (
+              <EmptyState text="Billing reconciliation appears after a producer reconciles a provider bill for a closed period." />
+            ) : (
+              <div className="space-y-4">
+                <div className="flex flex-wrap gap-x-6 gap-y-2">
+                  {snapshot.reconciliation.currencies.map((row) => (
+                    <div key={row.currency}>
+                      <p className="font-mono text-[8px] uppercase text-[var(--mute)]">{row.currency}</p>
+                      <p className="mt-1 text-xs font-semibold text-[var(--text-strong)]">
+                        billed {formatMoney(row.billed, row.currency)} · estimated {formatMoney(row.estimated, row.currency)} · delta {formatMoney(row.delta, row.currency)}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+                <div className="grid gap-2 lg:grid-cols-2">
+                  {snapshot.reconciliation.periods.slice(0, 12).map((period) => (
+                    <div key={`${period.providerKey}:${period.start}:${period.billSource}`} className="rounded-lg border border-[var(--border)] px-3 py-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="truncate text-[11px] font-semibold text-[var(--text-strong)]">{period.providerVendor} · {period.providerKey}</p>
+                        <p className="shrink-0 font-mono text-[9px] text-[var(--mute)]">{timelineLabel(period.start, displayedRange)}</p>
+                      </div>
+                      <p className="mt-1 font-mono text-[10px] text-[var(--text-dim)]">
+                        billed {formatMoney(period.billed, period.currency)} · estimated {formatMoney(period.estimated, period.currency)} · delta {formatMoney(period.delta, period.currency)}
+                        {period.units !== undefined ? ` · ${period.units} ${period.unit ?? "units"}` : ""}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-[10px] text-[var(--text-dim)]">
+                  Estimates cover only operations that carried cost evidence; billed totals come from provider billing APIs after their reporting lag.
+                </p>
+              </div>
+            )}
+          </Panel>
+        </section>
+
         <CockpitWindowPulse
           range={displayedRange}
           timeline={snapshot.timeline}

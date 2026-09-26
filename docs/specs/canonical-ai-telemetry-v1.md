@@ -291,6 +291,44 @@ type ProviderProbeEventDataV1 = {
 SignalOps derives health from windows of attempts and probes. A producer cannot directly set the
 projected health state.
 
+### 6.6 Cost reconciliation
+
+```ts
+type CostReconciliationEventDataV1 = {
+  scope: "provider_period" | "route_period"
+  provider: { providerKey: string; providerVendor: string }
+  period: { start: string; end: string }
+  cost: { amount: DecimalString; currency: string; source: "billing_reconciled" }
+  basis: {
+    billSource: string
+    billReference?: string
+    units?: number
+    unit?: string
+    unitPrice?: number
+  }
+  route?: Route
+  resource: Resource
+  attributes?: Record<string, string | number | boolean>
+}
+```
+
+A reconciliation observation states money a provider billed for a closed period, taken from the
+provider's own billing API (`basis.billSource`, for example `fal.models.usage` or
+`openai.organization.costs`). It is immutable: a later period is a new event, never an edit, and a
+producer re-run emits the same event id so ingest deduplicates it.
+
+Reconciliation is deliberately separate from attempt cost:
+
+- It carries no operation or attempt identity. Projections MUST NOT synthesize lifecycle state from
+  it and MUST NOT add it to attempt-derived cost totals.
+- Producers MUST only reconcile periods whose billing lag has passed (fal hourly buckets at least
+  90 minutes old, OpenAI daily buckets at least 25 hours old), so a reconciled number never changes
+  after emission.
+- `scope: "route_period"` requires `route`; `scope: "provider_period"` forbids it and reconciles the
+  whole provider for the period.
+- The cockpit compares billed money with the attempt-level estimate for the same period and
+  provider and shows the delta; the estimate covers only operations that carried cost evidence.
+
 ## 7. Canonical example
 
 ```json
@@ -415,6 +453,10 @@ MUST NOT turn a successful customer operation into a failure.
 - V1 is closed-world. Adding, removing, or renaming any field changes the accepted instance set and
   requires v2.
 - Changing a field's meaning, an accepted enum, or money/status semantics also requires v2.
+- Introducing a brand-new event type is additive-compatible when every existing valid instance
+  stays valid, no existing type gains or loses semantics, and the type ships with valid and invalid
+  fixtures; `com.signalops.ai.cost.reconciliation.v1` entered v1 under this rule. Changing or
+  removing an existing type, field, or accepted enum member remains v2-gated.
 - SignalOps MUST retain v1 ingestion for at least one documented migration window after v2 ships.
 - Client adapters MUST pin a contract version and pass shared fixtures before release.
 - The existing prototype event shapes are v0. SignalOps may provide a v0-to-v1 compatibility

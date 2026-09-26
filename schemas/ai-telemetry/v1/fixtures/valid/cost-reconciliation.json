@@ -1,0 +1,38 @@
+{
+  "specversion": "1.0",
+  "id": "phosphene:reconcile:primary-fal:2026-08-22T00:00:00.000Z:v1",
+  "source": "urn:phosphene:production:billing-reconciler",
+  "type": "com.signalops.ai.cost.reconciliation.v1",
+  "subject": "provider/primary-fal",
+  "time": "2026-08-23T05:00:00.000Z",
+  "datacontenttype": "application/json",
+  "dataschema": "https://signalops.cc/schemas/ai-telemetry/v1",
+  "data": {
+    "scope": "provider_period",
+    "provider": {
+      "providerKey": "primary-fal",
+      "providerVendor": "fal"
+    },
+    "period": {
+      "start": "2026-08-23T04:00:00.000Z",
+      "end": "2026-08-23T05:00:00.000Z"
+    },
+    "cost": {
+      "amount": "0.105",
+      "currency": "USD",
+      "source": "billing_reconciled"
+    },
+    "basis": {
+      "billSource": "fal.models.usage",
+      "billReference": "fal-day-20260822",
+      "units": 2,
+      "unit": "image"
+    },
+    "resource": {
+      "environment": "production",
+      "service": "billing-reconciler",
+      "release": "de4918457d6009cfe90a10222439881af8be8e14",
+      "region": "hetzner"
+    }
+  }
+}

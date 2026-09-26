@@ -33,7 +33,13 @@ type AttemptTerminalEvent = Extract<
 
 type NonProbeEvent = Exclude<
   SignalOpsEventV1,
-  { type: "com.signalops.ai.provider.probe.v1" }
+  | { type: "com.signalops.ai.provider.probe.v1" }
+  | { type: "com.signalops.ai.cost.reconciliation.v1" }
+>;
+
+type ReconciliationEvent = Extract<
+  SignalOpsEventV1,
+  { type: "com.signalops.ai.cost.reconciliation.v1" }
 >;
 
 export type SignalOpsOpsRangeV1 = "24h" | "7d" | "30d" | "90d";
@@ -204,6 +210,35 @@ export type SignalOpsOpsSnapshotV1 = {
   failureBreakdown: SignalOpsFailureSnapshotV1[];
   recentOperations: SignalOpsOperationSnapshotV1[];
   recentFailedOperations: SignalOpsOperationSnapshotV1[];
+  reconciliation: SignalOpsReconciliationBlockV1;
+};
+
+export type SignalOpsReconciliationPeriodRowV1 = {
+  providerKey: string;
+  providerVendor: string;
+  start: string;
+  end: string;
+  billSource: string;
+  currency: string;
+  billed: number;
+  estimated: number;
+  delta: number;
+  units?: number;
+  unit?: string;
+  billReference?: string;
+};
+
+export type SignalOpsReconciliationCurrencyRowV1 = {
+  currency: string;
+  billed: number;
+  estimated: number;
+  delta: number;
+};
+
+export type SignalOpsReconciliationBlockV1 = {
+  lastReconciledAt: string | null;
+  currencies: SignalOpsReconciliationCurrencyRowV1[];
+  periods: SignalOpsReconciliationPeriodRowV1[];
 };
 
 type OperationState = {
@@ -258,6 +293,14 @@ const providerExcludedFailures = new Set<SignalOpsFailureCategoryV1>([
   "customer_cancelled",
   "client_configuration",
 ]);
+
+type AttemptTerminalCostV1 = {
+  time: string;
+  currency: string;
+  amount: number;
+};
+
+const MAX_RECONCILIATION_PERIODS_V1 = 50;
 
 export function rangeStartV1(range: SignalOpsOpsRangeV1, now = new Date()): string {
   const hours =
@@ -361,6 +404,77 @@ function durationBetween(start: string | undefined, end: string): number | null 
   return Number.isFinite(duration) && duration >= 0 ? duration : null;
 }
 
+function buildReconciliationBlockV1(
+  events: readonly ReconciliationEvent[],
+  attemptTerminalCosts: ReadonlyMap<string, AttemptTerminalCostV1[]>,
+): SignalOpsReconciliationBlockV1 {
+  if (events.length === 0) {
+    return { lastReconciledAt: null, currencies: [], periods: [] };
+  }
+  const sorted = [...events].sort((left, right) =>
+    left.time.localeCompare(right.time) ||
+    left.id.localeCompare(right.id),
+  );
+  const lastReconciledAt = sorted.at(-1)?.time ?? null;
+  const periods: SignalOpsReconciliationPeriodRowV1[] = [];
+  const currencyMap = new Map<string, SignalOpsReconciliationCurrencyRowV1>();
+  for (const event of sorted) {
+    const startMs = Date.parse(event.data.period.start);
+    const endMs = Date.parse(event.data.period.end);
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) continue;
+    const estimatedRows = attemptTerminalCosts.get(event.data.provider.providerKey) ?? [];
+    let estimated = 0;
+    for (const row of estimatedRows) {
+      const ts = Date.parse(row.time);
+      if (Number.isFinite(ts) && ts >= startMs && ts < endMs) {
+        estimated += Number.isFinite(row.amount) ? row.amount : 0;
+      }
+    }
+    const billed = Number(event.data.cost.amount);
+    const safeBilled = Number.isFinite(billed) ? billed : 0;
+    const currency = event.data.cost.currency;
+    const period: SignalOpsReconciliationPeriodRowV1 = {
+      providerKey: event.data.provider.providerKey,
+      providerVendor: event.data.provider.providerVendor,
+      start: event.data.period.start,
+      end: event.data.period.end,
+      billSource: event.data.basis.billSource,
+      currency,
+      billed: safeBilled,
+      estimated,
+      delta: safeBilled - estimated,
+      ...(event.data.basis.billReference !== undefined
+        ? { billReference: event.data.basis.billReference }
+        : {}),
+      ...(event.data.basis.units !== undefined ? { units: event.data.basis.units } : {}),
+      ...(event.data.basis.unit !== undefined ? { unit: event.data.basis.unit } : {}),
+    };
+    periods.push(period);
+    const row = currencyMap.get(currency) ?? {
+      currency,
+      billed: 0,
+      estimated: 0,
+      delta: 0,
+    };
+    row.billed += safeBilled;
+    row.estimated += estimated;
+    row.delta = row.billed - row.estimated;
+    currencyMap.set(currency, row);
+  }
+  periods.sort(
+    (left, right) =>
+      right.start.localeCompare(left.start) ||
+      left.providerKey.localeCompare(right.providerKey),
+  );
+  return {
+    lastReconciledAt,
+    currencies: [...currencyMap.values()].sort((left, right) =>
+      left.currency.localeCompare(right.currency),
+    ),
+    periods: periods.slice(0, MAX_RECONCILIATION_PERIODS_V1),
+  };
+}
+
 function providerHealth(
   row: ProviderAccumulator,
   now: Date,
@@ -428,7 +542,13 @@ function attemptInstrumentationStartV1(
       record.event.type === "com.signalops.ai.attempt.started.v1" ||
       record.event.type === "com.signalops.ai.attempt.terminal.v1",
   )?.event;
-  if (!firstAttempt || firstAttempt.type === "com.signalops.ai.provider.probe.v1") return null;
+  if (
+    !firstAttempt ||
+    firstAttempt.type !== "com.signalops.ai.attempt.started.v1" &&
+    firstAttempt.type !== "com.signalops.ai.attempt.terminal.v1"
+  ) {
+    return null;
+  }
   const accepted = operations.get(firstAttempt.data.operation.id)?.accepted?.time;
   return accepted && accepted < firstAttempt.time ? accepted : firstAttempt.time;
 }
@@ -466,6 +586,7 @@ export function buildSignalOpsOpsSnapshotV1(input: {
   const attemptIdentity = new Map<string, string>();
   const operationIdentity = new Map<string, string>();
   const probes: Extract<SignalOpsEventV1, { type: "com.signalops.ai.provider.probe.v1" }>[] = [];
+  const reconciliations: ReconciliationEvent[] = [];
   const environments = new Set(
     records.map((record) => record.event.data.resource.environment),
   );
@@ -477,6 +598,15 @@ export function buildSignalOpsOpsSnapshotV1(input: {
     const eventInRange = Date.parse(event.time) >= startMs;
     if (event.type === "com.signalops.ai.provider.probe.v1") {
       if (eventInRange) probes.push(event);
+      continue;
+    }
+
+    // Reconciliation events are immutable observations of provider-billed money, not lifecycle
+    // facts. Exclude them BEFORE any code reads `event.data.operation.id` so they can never
+    // synthesize operations or attempts, do not alter coverage, and never enter
+    // `totals.costByCurrency` alongside attempt-derived attempt costs.
+    if (event.type === "com.signalops.ai.cost.reconciliation.v1") {
+      reconciliations.push(event);
       continue;
     }
 
@@ -535,6 +665,10 @@ export function buildSignalOpsOpsSnapshotV1(input: {
   const providerRows = new Map<string, ProviderAccumulator>();
   const totalCosts = new Map<string, SignalOpsCostTotalsV1>();
   const costedOperations = new Set<string>();
+  // Per-provider-key accumulator of attempt-terminal cost evidence keyed by terminal time.
+  // Reconciliation events use this to compute `estimated = sum(amount)` for matching
+  // [period.start, period.end) windows. Reconciliation cost itself never enters here.
+  const attemptTerminalCostsByProvider = new Map<string, AttemptTerminalCostV1[]>();
   const timelineState = createTimelineV1(input.range, now);
   const modelAccumulators = new Map<string, ModelAccumulatorV1>();
   const failureAccumulators = new Map<string, SignalOpsFailureSnapshotV1>();
@@ -594,6 +728,13 @@ export function buildSignalOpsOpsSnapshotV1(input: {
         event.data.cost.source,
         event.data.cost.amount,
       );
+      const list = attemptTerminalCostsByProvider.get(event.data.route.providerKey) ?? [];
+      list.push({
+        time: event.time,
+        currency: event.data.cost.currency,
+        amount: Number(event.data.cost.amount),
+      });
+      attemptTerminalCostsByProvider.set(event.data.route.providerKey, list);
     }
     row.recentOutcomes.push({
       occurredAt: event.time,
@@ -887,5 +1028,6 @@ export function buildSignalOpsOpsSnapshotV1(input: {
     recentFailedOperations: recentOperations
       .filter((operation) => isFailedOperationStatusV1(operation.status))
       .slice(0, 50),
+    reconciliation: buildReconciliationBlockV1(reconciliations, attemptTerminalCostsByProvider),
   };
 }
