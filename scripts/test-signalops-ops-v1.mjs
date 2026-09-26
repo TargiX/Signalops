@@ -508,4 +508,43 @@ assert.equal(providerPeriod.billed, 0.105);
 assert.equal(providerPeriod.estimated, 0.053, "Estimated = sum of attempt-terminal costs in window.");
 assert.equal(providerPeriod.delta, 0.105 - 0.053);
 
+// A route_period observation must estimate only the attempts on its own route,
+// while a provider_period observation for the same provider sums every route.
+const otherRouteAttempt = structuredClone(attemptTerminal);
+otherRouteAttempt.id = "evt_job_123_attempt_other_route_terminal";
+otherRouteAttempt.data.attempt = { id: "attempt_other_route", number: 3 };
+otherRouteAttempt.data.route = {
+  ...otherRouteAttempt.data.route,
+  modelKey: "flux-2-max",
+  providerModelKey: "fal-ai/flux-2-max",
+};
+otherRouteAttempt.data.cost = { amount: "0.07", currency: "USD", source: "catalog_estimate" };
+const routeScopeSnapshot = buildSignalOpsOpsSnapshotV1({
+  tenantId,
+  tenantName: "Phosphene",
+  range: "24h",
+  records: [
+    ...reconciliationRecords,
+    { tenantId, receivedAt, event: otherRouteAttempt },
+  ],
+  now: new Date("2026-08-23T12:00:00.000Z"),
+});
+const routePeriod = routeScopeSnapshot.reconciliation.periods.find(
+  (row) => row.scope === "route_period",
+);
+const providerPeriodWithNoise = routeScopeSnapshot.reconciliation.periods.find(
+  (row) => row.scope === "provider_period",
+);
+assert.ok(routePeriod && providerPeriodWithNoise);
+assert.equal(
+  routePeriod.estimated,
+  0.053,
+  "route_period must ignore attempts on other routes of the same provider.",
+);
+assert.equal(
+  providerPeriodWithNoise.estimated,
+ 0.123,
+  "provider_period must sum every route of the provider.",
+);
+
 console.log("signalops ops v1 checks passed");
