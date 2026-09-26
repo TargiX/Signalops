@@ -216,6 +216,7 @@ export type SignalOpsOpsSnapshotV1 = {
 export type SignalOpsReconciliationPeriodRowV1 = {
   providerKey: string;
   providerVendor: string;
+  scope: "provider_period" | "route_period";
   start: string;
   end: string;
   billSource: string;
@@ -298,6 +299,7 @@ type AttemptTerminalCostV1 = {
   time: string;
   currency: string;
   amount: number;
+  modelKey: string;
 };
 
 const MAX_RECONCILIATION_PERIODS_V1 = 50;
@@ -422,9 +424,13 @@ function buildReconciliationBlockV1(
     const startMs = Date.parse(event.data.period.start);
     const endMs = Date.parse(event.data.period.end);
     if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) continue;
+    const routeModelKey = "route" in event.data ? event.data.route?.modelKey : undefined;
     const estimatedRows = attemptTerminalCosts.get(event.data.provider.providerKey) ?? [];
     let estimated = 0;
     for (const row of estimatedRows) {
+      // route_period observations reconcile one route: only attempts on the same
+      // model count towards their estimate. provider_period sums the whole provider.
+      if (routeModelKey !== undefined && row.modelKey !== routeModelKey) continue;
       const ts = Date.parse(row.time);
       if (Number.isFinite(ts) && ts >= startMs && ts < endMs) {
         estimated += Number.isFinite(row.amount) ? row.amount : 0;
@@ -436,6 +442,7 @@ function buildReconciliationBlockV1(
     const period: SignalOpsReconciliationPeriodRowV1 = {
       providerKey: event.data.provider.providerKey,
       providerVendor: event.data.provider.providerVendor,
+      scope: event.data.scope,
       start: event.data.period.start,
       end: event.data.period.end,
       billSource: event.data.basis.billSource,
@@ -733,6 +740,7 @@ export function buildSignalOpsOpsSnapshotV1(input: {
         time: event.time,
         currency: event.data.cost.currency,
         amount: Number(event.data.cost.amount),
+        modelKey: event.data.route.modelKey,
       });
       attemptTerminalCostsByProvider.set(event.data.route.providerKey, list);
     }
