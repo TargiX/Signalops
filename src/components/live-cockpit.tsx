@@ -2119,6 +2119,39 @@ export function LiveCockpit() {
           </Panel>
         </section>
 
+        <section className="mt-4">
+          <Panel
+            title="Spend efficiency"
+            subtitle={
+              snapshot.spendEfficiency.currencies.length === 0
+                ? "No cost evidence in this window yet"
+                : "Where cost evidence went: succeeded work, retries, and operations that produced nothing"
+            }
+          >
+            {snapshot.spendEfficiency.currencies.length === 0 ? (
+              <EmptyState text="Spend efficiency appears once operations carry cost evidence." />
+            ) : (
+              <div className="grid gap-2 lg:grid-cols-2">
+                {snapshot.spendEfficiency.currencies.map((row) => (
+                  <div key={row.currency} className="rounded-lg border border-[var(--border)] px-3 py-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="font-mono text-[10px] font-bold uppercase text-[var(--mute)]">{row.currency}</p>
+                      <p className="font-mono text-[10px] text-[var(--text-dim)]">
+                        {row.costPerSucceededOperation === null
+                          ? "—"
+                          : `${formatMoney(row.costPerSucceededOperation, row.currency)} / succeeded op`}
+                      </p>
+                    </div>
+                    <p className="mt-1 font-mono text-[10px] leading-relaxed text-[var(--text-dim)]">
+                      succeeded {formatMoney(row.succeededCost, row.currency)} over {formatNumber(row.succeededOperations)} ops · retry tax {formatMoney(row.retryTaxCost, row.currency)} · wasted on failures {formatMoney(row.wastedCost, row.currency)} over {formatNumber(row.wastedOperations)} ops · cancelled {formatMoney(row.cancelledCost, row.currency)} over {formatNumber(row.cancelledOperations)} ops
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Panel>
+        </section>
+
         <CockpitWindowPulse
           range={displayedRange}
           timeline={snapshot.timeline}

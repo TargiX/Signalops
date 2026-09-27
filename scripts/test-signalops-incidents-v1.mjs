@@ -38,9 +38,26 @@ snapshot.coverage.providerAttempts = { observed: 50, total: 100, ratio: 0.5 };
 snapshot.coverage.failureClassification = { observed: 5, total: 6, ratio: 5 / 6 };
 snapshot.freshness.lastReceivedAt = "2026-08-23T23:00:00.000Z";
 snapshot.projection.sourceEventCount = 200;
+snapshot.coverage.operationCostEvidence = { observed: 40, total: 100, ratio: 0.4 };
+snapshot.reconciliation = {
+  lastReconciledAt: "2026-08-23T12:00:00.000Z",
+  currencies: [{ currency: "USD", billed: 3, estimated: 1.5, delta: 1.5 }],
+  periods: [0, 1, 2].map((index) => ({
+    providerKey: "fal",
+    providerVendor: "fal",
+    scope: "route_period",
+    start: `2026-08-23T0${index + 2}:00:00.000Z`,
+    end: `2026-08-23T0${index + 3}:00:00.000Z`,
+    billSource: "fal.models.usage",
+    currency: "USD",
+    billed: 1,
+    estimated: 0.5,
+    delta: 0.5,
+  })),
+};
 
 const defaults = defaultSignalOpsSloPoliciesV1(tenantId);
-assert.equal(defaults.length, 5);
+assert.equal(defaults.length, 7);
 assert.equal(defaults.find((policy) => policy.metric === "signal_freshness_ms")?.enabled, false);
 
 const evaluations = evaluateSignalOpsSloPoliciesV1({ snapshot, policies: defaults, now });
@@ -52,6 +69,8 @@ assert.deepEqual(
     ["provider_attempt_coverage", "breached", "critical"],
     ["failure_classification_coverage", "breached", "warning"],
     ["signal_freshness_ms", "disabled", null],
+    ["cost_evidence_coverage", "breached", "critical"],
+    ["reconciliation_delta_ratio", "breached", "warning"],
   ],
 );
 
@@ -61,6 +80,8 @@ lowSample.totals.succeeded = 1;
 lowSample.totals.failed = 2;
 lowSample.coverage.providerAttempts = { observed: 0, total: 3, ratio: 0 };
 lowSample.coverage.failureClassification = { observed: 0, total: 2, ratio: 0 };
+lowSample.coverage.operationCostEvidence = { observed: 0, total: 3, ratio: 0 };
+lowSample.reconciliation = { lastReconciledAt: null, currencies: [], periods: [] };
 assert.equal(
   evaluateSignalOpsSloPoliciesV1({ snapshot: lowSample, policies: defaults, now }).find(
     (evaluation) => evaluation.policy.metric === "operation_success_rate",
@@ -159,8 +180,10 @@ await assert.rejects(
 const decisions = evaluateSignalOpsIncidentsV1(snapshot, defaults).filter((item) =>
   item.metric.startsWith("slo:"),
 );
-assert.equal(decisions.length, 4);
+assert.equal(decisions.length, 6);
 assert.ok(decisions.every((item) => typeof item.evidence.observedValue === "number"));
+assert.ok(decisions.some((item) => item.metric === "slo:cost_evidence_coverage"));
+assert.ok(decisions.some((item) => item.metric === "slo:reconciliation_delta_ratio"));
 
 const reliability = decisions.find((item) => item.metric === "slo:operation_success_rate");
 assert.ok(reliability);

@@ -547,4 +547,92 @@ assert.equal(
   "provider_period must sum every route of the provider.",
 );
 
+
+// Spend efficiency: money must be attributed to the operation outcome that
+// consumed it, with retries separated from first attempts.
+const efficiencyAccepted = structuredClone(accepted);
+const efficiencyAttemptOne = structuredClone(attemptTerminal);
+const efficiencyAttemptTwo = structuredClone(attemptTerminal);
+const efficiencyTerminal = structuredClone(operationTerminal);
+const failedEfficiencyAccepted = structuredClone(accepted);
+const failedEfficiencyAttempt = structuredClone(attemptTerminal);
+const failedEfficiencyTerminal = structuredClone(operationTerminal);
+const cancelledAccepted = structuredClone(accepted);
+const cancelledAttempt = structuredClone(attemptTerminal);
+const cancelledTerminal = structuredClone(operationTerminal);
+
+efficiencyAccepted.data.operation.id = "op_eff_s";
+efficiencyAttemptOne.data.operation.id = "op_eff_s";
+efficiencyAttemptOne.id = "evt_eff_s_a1";
+efficiencyAttemptOne.data.attempt = { id: "att_eff_s_1", number: 1 };
+efficiencyAttemptOne.data.cost = { amount: "0.05", currency: "USD", source: "catalog_estimate" };
+efficiencyAttemptTwo.data.operation.id = "op_eff_s";
+efficiencyAttemptTwo.id = "evt_eff_s_a2";
+efficiencyAttemptTwo.data.attempt = { id: "att_eff_s_2", number: 2 };
+efficiencyAttemptTwo.data.cost = { amount: "0.02", currency: "USD", source: "catalog_estimate" };
+efficiencyTerminal.data.operation.id = "op_eff_s";
+efficiencyTerminal.id = "evt_eff_s_term";
+efficiencyTerminal.data.outcome = { status: "succeeded" };
+
+failedEfficiencyAccepted.data.operation.id = "op_eff_f";
+failedEfficiencyAttempt.data.operation.id = "op_eff_f";
+failedEfficiencyAttempt.id = "evt_eff_f_a1";
+failedEfficiencyAttempt.data.attempt = { id: "att_eff_f_1", number: 1 };
+failedEfficiencyAttempt.data.cost = { amount: "0.10", currency: "USD", source: "catalog_estimate" };
+failedEfficiencyTerminal.data.operation.id = "op_eff_f";
+failedEfficiencyTerminal.id = "evt_eff_f_term";
+failedEfficiencyTerminal.data.outcome = {
+  status: "failed",
+  failure: { category: "provider", responsibility: "provider", code: "provider_http_500", retryable: false },
+};
+
+cancelledAccepted.data.operation.id = "op_eff_c";
+cancelledAttempt.data.operation.id = "op_eff_c";
+cancelledAttempt.id = "evt_eff_c_a1";
+cancelledAttempt.data.attempt = { id: "att_eff_c_1", number: 1 };
+cancelledAttempt.data.cost = { amount: "0.07", currency: "USD", source: "catalog_estimate" };
+cancelledTerminal.data.operation.id = "op_eff_c";
+cancelledTerminal.id = "evt_eff_c_term";
+cancelledTerminal.data.outcome = { status: "cancelled" };
+
+const efficiencySnapshot = buildSignalOpsOpsSnapshotV1({
+  tenantId,
+  range: "24h",
+  now: new Date("2026-08-23T12:00:00.000Z"),
+  records: [
+    efficiencyAccepted,
+    efficiencyAttemptOne,
+    efficiencyAttemptTwo,
+    efficiencyTerminal,
+    failedEfficiencyAccepted,
+    failedEfficiencyAttempt,
+    failedEfficiencyTerminal,
+    cancelledAccepted,
+    cancelledAttempt,
+    cancelledTerminal,
+  ].map((event, index) => ({
+    tenantId,
+    event,
+    payloadDigest: `eff-${index}`,
+    receivedAt,
+  })),
+});
+assert.deepEqual(
+  efficiencySnapshot.spendEfficiency.currencies,
+  [
+    {
+      currency: "USD",
+      succeededCost: 0.07,
+      wastedCost: 0.1,
+      cancelledCost: 0.07,
+      retryTaxCost: 0.02,
+      succeededOperations: 1,
+      wastedOperations: 1,
+      cancelledOperations: 1,
+      costPerSucceededOperation: 0.07,
+    },
+  ],
+  "Spend efficiency must attribute cost evidence to operation outcomes and separate retry money.",
+);
+
 console.log("signalops ops v1 checks passed");

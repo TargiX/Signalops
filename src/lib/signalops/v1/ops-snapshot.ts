@@ -211,6 +211,37 @@ export type SignalOpsOpsSnapshotV1 = {
   recentOperations: SignalOpsOperationSnapshotV1[];
   recentFailedOperations: SignalOpsOperationSnapshotV1[];
   reconciliation: SignalOpsReconciliationBlockV1;
+  spendEfficiency: SignalOpsSpendEfficiencyBlockV1;
+};
+
+export type SignalOpsSpendEfficiencyCurrencyV1 = {
+  currency: string;
+  /** Cost evidence attached to attempts of operations that succeeded. */
+  succeededCost: number;
+  /** Cost evidence attached to attempts of operations that failed, expired or were abandoned. */
+  wastedCost: number;
+  /** Cost evidence attached to attempts of customer-cancelled operations. */
+  cancelledCost: number;
+  /** Subset of succeededCost paid for attempts numbered 2 and above. */
+  retryTaxCost: number;
+  succeededOperations: number;
+  wastedOperations: number;
+  cancelledOperations: number;
+  costPerSucceededOperation: number | null;
+};
+
+export type SignalOpsSpendEfficiencyBlockV1 = {
+  currencies: SignalOpsSpendEfficiencyCurrencyV1[];
+};
+
+type SignalOpsSpendEfficiencyAccumulatorV1 = {
+  succeededCost: number;
+  wastedCost: number;
+  cancelledCost: number;
+  retryTaxCost: number;
+  succeededOperations: number;
+  wastedOperations: number;
+  cancelledOperations: number;
 };
 
 export type SignalOpsReconciliationPeriodRowV1 = {
@@ -684,6 +715,11 @@ export function buildSignalOpsOpsSnapshotV1(input: {
   let terminalAttempts = 0;
   let costedTerminalAttempts = 0;
   let retryableFailures = 0;
+  // Per-operation cost evidence, split into first-attempt and retry money, so
+  // the spend-efficiency block can attribute it to the operation's outcome.
+  const costByOperation = new Map<string, Map<string, { total: number; retry: number }>>();
+  const spendEfficiency = new Map<string, SignalOpsSpendEfficiencyAccumulatorV1>();
+  const roundUsd = (value: number): number => Math.round(value * 1_000_000) / 1_000_000;
   for (const attempt of attempts.values()) {
     const event = attempt.terminal;
     const bucket = timelineBucketV1(
@@ -727,6 +763,15 @@ export function buildSignalOpsOpsSnapshotV1(input: {
     if (event.data.cost) {
       costedTerminalAttempts += 1;
       costedOperations.add(attempt.operationId);
+      const costAmount = Number(event.data.cost.amount);
+      if (Number.isFinite(costAmount)) {
+        const perCurrency = costByOperation.get(attempt.operationId) ?? new Map();
+        const entry = perCurrency.get(event.data.cost.currency) ?? { total: 0, retry: 0 };
+        entry.total += costAmount;
+        if (event.data.attempt.number >= 2) entry.retry += costAmount;
+        perCurrency.set(event.data.cost.currency, entry);
+        costByOperation.set(attempt.operationId, perCurrency);
+      }
       addCost(row.costs, event.data.cost.currency, event.data.cost.source, event.data.cost.amount);
       addCost(totalCosts, event.data.cost.currency, event.data.cost.source, event.data.cost.amount);
       addCost(
@@ -866,6 +911,32 @@ export function buildSignalOpsOpsSnapshotV1(input: {
       else if (status === "cancelled") cancelledOperations += 1;
       else if (status === "stalled") stalledOperations += 1;
       else if (failed) failedOperations += 1;
+      const operationCosts = costByOperation.get(operationId);
+      if (operationCosts && status !== "running" && status !== "stalled") {
+        for (const [currency, amounts] of operationCosts) {
+          const acc = spendEfficiency.get(currency) ?? {
+            succeededCost: 0,
+            wastedCost: 0,
+            cancelledCost: 0,
+            retryTaxCost: 0,
+            succeededOperations: 0,
+            wastedOperations: 0,
+            cancelledOperations: 0,
+          };
+          if (status === "succeeded") {
+            acc.succeededCost += amounts.total;
+            acc.retryTaxCost += amounts.retry;
+            acc.succeededOperations += 1;
+          } else if (status === "cancelled") {
+            acc.cancelledCost += amounts.total;
+            acc.cancelledOperations += 1;
+          } else if (failed) {
+            acc.wastedCost += amounts.total;
+            acc.wastedOperations += 1;
+          }
+          spendEfficiency.set(currency, acc);
+        }
+      }
       if (durationMs !== null) operationDurations.push(durationMs);
       operationBucket.operations += 1;
       if (failed) operationBucket.failedOperations += 1;
@@ -1037,5 +1108,23 @@ export function buildSignalOpsOpsSnapshotV1(input: {
       .filter((operation) => isFailedOperationStatusV1(operation.status))
       .slice(0, 50),
     reconciliation: buildReconciliationBlockV1(reconciliations, attemptTerminalCostsByProvider),
+    spendEfficiency: {
+      currencies: [...spendEfficiency.entries()]
+        .map(([currency, acc]) => ({
+          currency,
+          succeededCost: roundUsd(acc.succeededCost),
+          wastedCost: roundUsd(acc.wastedCost),
+          cancelledCost: roundUsd(acc.cancelledCost),
+          retryTaxCost: roundUsd(acc.retryTaxCost),
+          succeededOperations: acc.succeededOperations,
+          wastedOperations: acc.wastedOperations,
+          cancelledOperations: acc.cancelledOperations,
+          costPerSucceededOperation:
+            acc.succeededOperations > 0
+              ? roundUsd(acc.succeededCost / acc.succeededOperations)
+              : null,
+        }))
+        .sort((left, right) => left.currency.localeCompare(right.currency)),
+    },
   };
 }
