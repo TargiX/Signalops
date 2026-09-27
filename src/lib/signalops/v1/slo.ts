@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import type { SignalOpsOpsRangeV1, SignalOpsOpsSnapshotV1 } from "./ops-snapshot.ts";
+import { rangeStartV1 } from "./ops-snapshot.ts";
 import {
   getSignalOpsSupabaseConfigV1,
   signalOpsSupabaseRestRequestV1,
@@ -11,7 +12,9 @@ export type SignalOpsSloMetricV1 =
   | "operation_p95_duration_ms"
   | "provider_attempt_coverage"
   | "failure_classification_coverage"
-  | "signal_freshness_ms";
+  | "signal_freshness_ms"
+  | "cost_evidence_coverage"
+  | "reconciliation_delta_ratio";
 
 export type SignalOpsSloComparatorV1 = "gte" | "lte";
 export type SignalOpsSloEvaluationStatusV1 =
@@ -146,6 +149,36 @@ const DEFAULT_POLICY_TEMPLATES: readonly PolicyTemplate[] = [
     windowMinutes: 60,
     enabled: false,
   },
+  {
+    id: "slo_cost_evidence_coverage",
+    version: "spend-truth-2026-09-28",
+    name: "Cost evidence coverage",
+    description:
+      "Operations carrying cost evidence. Spend totals below this coverage are partial and are labeled as such in the cockpit.",
+    metric: "cost_evidence_coverage",
+    comparator: "gte",
+    objective: 0.95,
+    warningThreshold: 0.9,
+    criticalThreshold: 0.75,
+    minimumSample: 5,
+    windowMinutes: 1_440,
+    enabled: true,
+  },
+  {
+    id: "slo_reconciliation_delta_ratio",
+    version: "spend-truth-2026-09-28",
+    name: "Billing reconciliation delta",
+    description:
+      "Absolute gap between provider-billed money and attempt-level estimates, as a share of billed. Breaches mean our cost evidence no longer describes what providers charge.",
+    metric: "reconciliation_delta_ratio",
+    comparator: "lte",
+    objective: 0.15,
+    warningThreshold: 0.25,
+    criticalThreshold: 0.5,
+    minimumSample: 3,
+    windowMinutes: 10_080,
+    enabled: true,
+  },
 ] as const;
 
 const globalSloState = globalThis as typeof globalThis & {
@@ -255,7 +288,8 @@ function validatePolicy(policy: SignalOpsSloPolicyV1): void {
   if (!ordered) throw new Error("invalid_threshold_order");
   if (
     policy.metric.endsWith("rate") ||
-    policy.metric.endsWith("coverage")
+    policy.metric.endsWith("coverage") ||
+    policy.metric.endsWith("ratio")
   ) {
     if (
       policy.objective > 1 ||
@@ -343,6 +377,30 @@ function observationForPolicy(
     return {
       observedValue: snapshot.coverage.failureClassification.ratio,
       sampleSize: snapshot.coverage.failureClassification.total,
+    };
+  }
+  if (metric === "cost_evidence_coverage") {
+    return {
+      observedValue: snapshot.coverage.operationCostEvidence.ratio,
+      sampleSize: snapshot.coverage.operationCostEvidence.total,
+    };
+  }
+  if (metric === "reconciliation_delta_ratio") {
+    const rangeStartMs = Date.parse(rangeStartV1(snapshot.range, now));
+    let billed = 0;
+    let absoluteDelta = 0;
+    let periods = 0;
+    for (const period of snapshot.reconciliation.periods) {
+      const endMs = Date.parse(period.end);
+      if (!Number.isFinite(endMs) || endMs <= rangeStartMs) continue;
+      if (!(period.billed > 0)) continue;
+      billed += period.billed;
+      absoluteDelta += Math.abs(period.delta);
+      periods += 1;
+    }
+    return {
+      observedValue: billed > 0 ? absoluteDelta / billed : null,
+      sampleSize: periods,
     };
   }
   const lastReceivedAt = snapshot.freshness.lastReceivedAt;
