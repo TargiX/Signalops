@@ -79,6 +79,23 @@ Implementation contract: [`signalops-slo-incidents-v1.md`](signalops-slo-inciden
 
 ### Increment 4 — cost and fleet intelligence
 
+- Spend-efficiency lens in the cockpit: cost evidence split into succeeded work,
+  retry tax, waste on failed operations, and cancelled operations, plus cost per
+  succeeded operation.
+- Two versioned spend objectives: `cost_evidence_coverage` (share of operations
+  carrying cost evidence) and `reconciliation_delta_ratio` (billed versus
+  estimated drift per reconciliation period), both with low-sample states.
+- Daily provider price watch (Phosphene `scripts/provider-price-watch.ts`):
+  diffs fal published prices against the stored `AppSetting` baseline and flags
+  moves beyond 5 %, unit flips, currency flips, and endpoints that left the
+  catalog. Unreachable or unusable prices carry the baseline forward instead of
+  deleting it; a run where every endpoint fails throws rather than rewriting
+  history; the first run seeds the baseline without reporting changes.
+- Policy metrics are a closed union (`SignalOpsSloMetricV1`) and the only policy
+  write path patches thresholds of registry-derived policies, so no database
+  migration is required for the new objectives: an out-of-registry metric cannot
+  be stored through the application.
+
 - Add immutable cost-adjustment observations in the next compatible contract version.
 - Reconcile estimates, provider reports, and billing facts without mutating execution history.
 - Add per-operation, per-route, and per-model unit economics and anomaly detection.
