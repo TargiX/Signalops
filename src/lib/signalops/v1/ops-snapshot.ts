@@ -51,6 +51,13 @@ export type SignalOpsCurrencyCostV1 = SignalOpsCostTotalsV1 & {
   currency: string;
 };
 
+/** How many costed attempts carried each estimate provenance. */
+export type SignalOpsCostEstimateBasisMixV1 = {
+  contract: number;
+  list: number;
+  unspecified: number;
+};
+
 export type SignalOpsProviderSnapshotV1 = {
   providerKey: string;
   providerVendor?: string;
@@ -187,6 +194,7 @@ export type SignalOpsOpsSnapshotV1 = {
     operationsWithAttemptTelemetry: number;
     operationsWithCostEvidence: number;
     costByCurrency: SignalOpsCurrencyCostV1[];
+    costEstimateBasis: SignalOpsCostEstimateBasisMixV1;
   };
   coverage: {
     operationAcceptance: SignalOpsCoverageMetricV1;
@@ -714,6 +722,11 @@ export function buildSignalOpsOpsSnapshotV1(input: {
   let pairedAttempts = 0;
   let terminalAttempts = 0;
   let costedTerminalAttempts = 0;
+  const costEstimateBasisMix: SignalOpsCostEstimateBasisMixV1 = {
+    contract: 0,
+    list: 0,
+    unspecified: 0,
+  };
   let retryableFailures = 0;
   // Per-operation cost evidence, split into first-attempt and retry money, so
   // the spend-efficiency block can attribute it to the operation's outcome.
@@ -762,6 +775,7 @@ export function buildSignalOpsOpsSnapshotV1(input: {
     if (durationMs !== null) row.durations.push(durationMs);
     if (event.data.cost) {
       costedTerminalAttempts += 1;
+      costEstimateBasisMix[event.data.cost.estimateBasis ?? "unspecified"] += 1;
       costedOperations.add(attempt.operationId);
       const costAmount = Number(event.data.cost.amount);
       if (Number.isFinite(costAmount)) {
@@ -1083,6 +1097,7 @@ export function buildSignalOpsOpsSnapshotV1(input: {
       operationsWithAttemptTelemetry,
       operationsWithCostEvidence,
       costByCurrency: costRows(totalCosts),
+      costEstimateBasis: costEstimateBasisMix,
     },
     coverage: {
       operationAcceptance: coverageMetric(acceptedOperations, recentOperations.length),

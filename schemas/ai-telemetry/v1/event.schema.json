@@ -294,6 +294,9 @@
         "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
         "source": {
           "enum": ["provider_reported", "catalog_estimate", "billing_reconciled"]
+        },
+        "estimateBasis": {
+          "enum": ["contract", "list"]
         }
       }
     },
