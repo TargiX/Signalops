@@ -106,10 +106,19 @@ export type SignalOpsTerminalOutcomeV1 =
       failure: SignalOpsFailureV1;
     };
 
+export type SignalOpsCostEstimateBasisV1 = "contract" | "list";
+
 export type SignalOpsCostV1 = {
   amount: string;
   currency: string;
   source: SignalOpsCostSourceV1;
+  /**
+   * Why an estimated amount is what it is: `contract` means a transcribed
+   * contract price table produced it, `list` means vendor list/catalog belief
+   * (including fallbacks when a contract window is closed). Absent on events
+   * from producers that predate the field.
+   */
+  estimateBasis?: SignalOpsCostEstimateBasisV1;
 };
 
 export type SignalOpsResourceV1 = {

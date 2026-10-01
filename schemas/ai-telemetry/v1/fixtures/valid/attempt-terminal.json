@@ -35,7 +35,8 @@
     "cost": {
       "amount": "0.053",
       "currency": "USD",
-      "source": "catalog_estimate"
+      "source": "catalog_estimate",
+      "estimateBasis": "list"
     },
     "resource": {
       "environment": "production",
