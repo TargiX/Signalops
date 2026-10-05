@@ -32,6 +32,7 @@ export default function DocsPage() {
           <p className="mt-4 text-sm leading-6 text-[var(--text-dim)]">Save the script as <code className="rounded bg-[var(--surface-mute)] px-1.5 py-0.5 font-mono text-xs">quickstart.mjs</code>, provide your one-time credential through the environment, and run it on Node 20+.</p>
           <pre className="mt-5 overflow-x-auto rounded-lg border border-[var(--border)] bg-white p-3 font-mono text-[11px] text-[var(--text-dim)]">SIGNALOPS_INGEST_CREDENTIAL=&quot;sop_live_…&quot; node quickstart.mjs</pre>
           <Link href="/onboarding" className="mt-5 inline-flex h-10 items-center gap-2 rounded-lg bg-[var(--accent)] px-4 text-xs font-bold text-white hover:bg-[var(--accent-hover)]">Create a workspace <ArrowRight className="size-3.5" /></Link>
+          <Link href="/validate" className="mt-3 flex items-center gap-2 text-xs font-semibold text-[var(--text-dim)] transition-colors hover:text-[var(--accent)]">Validate a payload without a credential <ArrowRight className="size-3" /></Link>
         </div>
         <div className="min-w-0 overflow-hidden rounded-xl border border-[#1d2b52] bg-[#07122b] shadow-lg">
           <div className="flex items-center gap-2 border-b border-white/10 px-4 py-3 font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-white"><FileJson className="size-4 text-[#79a0ff]" /> quickstart.mjs</div>
