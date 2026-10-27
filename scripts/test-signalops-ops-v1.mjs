@@ -671,9 +671,10 @@ function reliabilityWindow(outcomes) {
   });
   const [evaluation] = evaluateSignalOpsSloPoliciesV1({
     snapshot: windowSnapshot,
-    policies: defaultSignalOpsSloPoliciesV1(tenantId).filter(
-      (policy) => policy.id === "slo_operation_success_rate",
-    ),
+    // Pinned to a 24h window so this checks the exclusion, not the default window.
+    policies: defaultSignalOpsSloPoliciesV1(tenantId)
+      .filter((policy) => policy.id === "slo_operation_success_rate")
+      .map((policy) => ({ ...policy, minimumSample: 20, windowMinutes: 1_440 })),
     now: reliabilityNow,
   });
   return { windowSnapshot, evaluation };

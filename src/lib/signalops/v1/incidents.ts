@@ -1,7 +1,7 @@
 import { createHash, createHmac } from "node:crypto";
 
 import { writeSignalOpsAuditEventV1 } from "./audit.ts";
-import type { SignalOpsOpsSnapshotV1 } from "./ops-snapshot.ts";
+import type { SignalOpsOpsRangeV1, SignalOpsOpsSnapshotV1 } from "./ops-snapshot.ts";
 import {
   getSignalOpsSupabaseConfigV1,
   signalOpsSupabaseRestRequestV1,
@@ -9,6 +9,7 @@ import {
 import {
   defaultSignalOpsSloPoliciesV1,
   evaluateSignalOpsSloPoliciesV1,
+  sloRangeForWindowV1,
   type SignalOpsSloPolicyV1,
 } from "./slo.ts";
 
@@ -142,9 +143,18 @@ export function evaluateSignalOpsIncidentsV1(
   policies: readonly SignalOpsSloPolicyV1[] = defaultSignalOpsSloPoliciesV1(
     snapshot.tenant.id,
   ),
+  // Snapshots for policies whose window is wider than `snapshot`; a policy without one is judged
+  // on `snapshot`. Provider, telemetry and capacity decisions always read `snapshot`.
+  sloSnapshots: ReadonlyMap<SignalOpsOpsRangeV1, SignalOpsOpsSnapshotV1> = new Map(),
 ): SignalOpsIncidentDecisionV1[] {
   const decisions: SignalOpsIncidentDecisionV1[] = [];
-  const sloEvaluations = evaluateSignalOpsSloPoliciesV1({ snapshot, policies });
+  const sloEvaluations = policies.flatMap((policy) =>
+    evaluateSignalOpsSloPoliciesV1({
+      snapshot: sloSnapshots.get(sloRangeForWindowV1(policy.windowMinutes)) ?? snapshot,
+      policies: [policy],
+      now: new Date(snapshot.generatedAt),
+    }),
+  );
   for (const evaluation of sloEvaluations) {
     if (evaluation.status !== "breached" || !evaluation.severity) continue;
     decisions.push(

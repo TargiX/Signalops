@@ -80,7 +80,7 @@ type PolicyTemplate = Omit<
 const DEFAULT_POLICY_TEMPLATES: readonly PolicyTemplate[] = [
   {
     id: "slo_operation_success_rate",
-    version: "operation-reliability-2026-10-27",
+    version: "operation-reliability-7d-2026-10-27",
     name: "Operation reliability",
     description:
       "Terminal AI operations that complete successfully. Customer-caused failures (content policy, invalid input) are excluded from the sample.",
@@ -89,8 +89,10 @@ const DEFAULT_POLICY_TEMPLATES: readonly PolicyTemplate[] = [
     objective: 0.99,
     warningThreshold: 0.98,
     criticalThreshold: 0.95,
-    minimumSample: 20,
-    windowMinutes: 1_440,
+    // A 99% objective cannot be told apart from 95% on a few dozen operations: at ~25 a day one
+    // provider hiccup is already 0.96. Seven days of a low-volume tenant gives a real sample.
+    minimumSample: 50,
+    windowMinutes: 10_080,
     enabled: true,
   },
   {
@@ -441,6 +443,14 @@ const SLO_EVALUATION_RANGES_V1: readonly { range: SignalOpsOpsRangeV1; minutes: 
   { range: "30d", minutes: 30 * 1_440 },
   { range: "90d", minutes: 90 * 1_440 },
 ];
+
+/** The smallest snapshot range that covers a policy window; incident evaluation never widens it. */
+export function sloRangeForWindowV1(windowMinutes: number): SignalOpsOpsRangeV1 {
+  return (
+    SLO_EVALUATION_RANGES_V1.find((candidate) => candidate.minutes >= windowMinutes) ??
+    SLO_EVALUATION_RANGES_V1[SLO_EVALUATION_RANGES_V1.length - 1]
+  ).range;
+}
 
 /**
  * Display evaluation for low-volume tenants: start at the policy window and widen until the
