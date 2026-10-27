@@ -106,6 +106,7 @@ import type {
 import {
   DEFAULT_SIGNALOPS_PROJECTION_POLICY_V1,
   effectiveProviderHealthV1,
+  operationReliabilityV1,
 } from "@/lib/signalops/v1/ops-snapshot";
 import type {
   SignalOpsOperatorMembershipV1,
@@ -1511,6 +1512,11 @@ export function LiveCockpit() {
     snapshot.totals.failedByResponsibility.client +
     snapshot.totals.failedByResponsibility.unknown;
   const customerFailures = snapshot.totals.failedByResponsibility.customer;
+  const reliability = operationReliabilityV1(snapshot.totals);
+  const succeededDetail =
+    reliability.excludedCustomerFailures > 0
+      ? `${formatPercent(snapshot.totals.successRate)} success · ${formatPercent(reliability.rate)} excl. content/input →`
+      : `${formatPercent(snapshot.totals.successRate)} success rate →`;
   const retainedOperations = mergeSignalOpsOperationSamplesV1(
     snapshot.recentOperations,
     snapshot.recentFailedOperations,
@@ -1999,7 +2005,7 @@ export function LiveCockpit() {
 
         <section className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
           <Metric icon={Database} label="Operations" value={formatNumber(snapshot.totals.operations)} detail="Inspect latest operations →" active={operationFilter === "all"} onClick={() => activateOperationFilter("all")} />
-          <Metric icon={CheckCircle2} label="Succeeded" value={formatNumber(snapshot.totals.succeeded)} detail={`${formatPercent(snapshot.totals.successRate)} success rate →`} tone="good" active={operationFilter === "succeeded"} onClick={() => activateOperationFilter("succeeded")} />
+          <Metric icon={CheckCircle2} label="Succeeded" value={formatNumber(snapshot.totals.succeeded)} detail={succeededDetail} tone="good" active={operationFilter === "succeeded"} onClick={() => activateOperationFilter("succeeded")} />
           <Metric icon={TriangleAlert} label="Failed" value={formatNumber(snapshot.totals.failed)} detail={`${formatNumber(providerFailures)} provider/system · ${formatNumber(customerFailures)} content/input →`} tone="bad" active={operationFilter === "failed"} onClick={() => activateOperationFilter("failed")} />
           <Metric icon={Clock3} label="Operation p95" value={formatDuration(snapshot.totals.p95DurationMs)} detail="terminal duration" />
           <Metric icon={Activity} label="Provider coverage" value={formatPercent(attemptCoverage)} detail={`${formatNumber(snapshot.coverage.providerAttempts.observed)} / ${formatNumber(snapshot.coverage.providerAttempts.total)} operations${coverageCohort.excludedOperations > 0 ? ` · ${formatNumber(coverageCohort.excludedOperations)} legacy` : ""}`} tone="warn" />

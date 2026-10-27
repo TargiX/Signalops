@@ -89,6 +89,29 @@ assert.equal(
   "insufficient_data",
 );
 
+// Customer-caused failures leave the reliability sample: 23 ok + 2 content-policy blocks is met,
+// and no reliability incident opens.
+const customerCaused = structuredClone(snapshot);
+customerCaused.totals.operations = 25;
+customerCaused.totals.succeeded = 23;
+customerCaused.totals.failed = 2;
+customerCaused.totals.successRate = 23 / 25;
+customerCaused.totals.failedByResponsibility = { provider: 0, platform: 0, client: 0, customer: 2, unknown: 0 };
+const customerCausedReliability = evaluateSignalOpsSloPoliciesV1({
+  snapshot: customerCaused,
+  policies: defaults,
+  now,
+}).find((evaluation) => evaluation.policy.metric === "operation_success_rate");
+assert.equal(customerCausedReliability?.status, "met");
+assert.equal(customerCausedReliability?.observedValue, 1);
+assert.equal(customerCausedReliability?.sampleSize, 23);
+assert.equal(
+  evaluateSignalOpsIncidentsV1(customerCaused, defaults).some(
+    (item) => item.metric === "slo:operation_success_rate",
+  ),
+  false,
+);
+
 // Display evaluation widens the window for low-volume tenants instead of hiding data.
 const bySampleRange = {
   "24h": { succeeded: 3, failed: 0, durations: 3 },

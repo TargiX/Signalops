@@ -575,6 +575,30 @@ export function effectiveProviderHealthV1(
   return { ...provider.windowHealth, live: false };
 }
 
+export type SignalOpsOperationReliabilityV1 = {
+  rate: number | null;
+  sampleSize: number;
+  excludedCustomerFailures: number;
+};
+
+// System reliability, as the reliability SLO and the cockpit read it. Failures the customer caused
+// (content-policy blocks, invalid input) say nothing about whether the system works, so they leave
+// both the numerator and the denominator. `totals.successRate` keeps the raw outcome rate.
+export function operationReliabilityV1(
+  totals: Pick<SignalOpsOpsSnapshotV1["totals"], "succeeded" | "failed" | "failedByResponsibility">,
+): SignalOpsOperationReliabilityV1 {
+  const excludedCustomerFailures = Math.min(
+    totals.failed,
+    totals.failedByResponsibility?.customer ?? 0,
+  );
+  const sampleSize = totals.succeeded + totals.failed - excludedCustomerFailures;
+  return {
+    rate: sampleSize === 0 ? null : totals.succeeded / sampleSize,
+    sampleSize,
+    excludedCustomerFailures,
+  };
+}
+
 export function isFailedOperationStatusV1(status: SignalOpsOperationStatusV1): boolean {
   return status === "failed" || status === "expired" || status === "abandoned";
 }
