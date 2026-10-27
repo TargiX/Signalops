@@ -12,6 +12,7 @@ import {
   evaluateSignalOpsSloPoliciesAdaptiveV1,
   evaluateSignalOpsSloPoliciesV1,
   listSignalOpsSloPoliciesV1,
+  sloRangeForWindowV1,
   updateSignalOpsSloPolicyV1,
 } from "../src/lib/signalops/v1/slo.ts";
 
@@ -89,10 +90,38 @@ assert.equal(
   "insufficient_data",
 );
 
+// Customer-caused failures leave the reliability sample: 23 ok + 2 content-policy blocks is met,
+// and no reliability incident opens.
+const customerCaused = structuredClone(snapshot);
+customerCaused.totals.operations = 25;
+customerCaused.totals.succeeded = 23;
+customerCaused.totals.failed = 2;
+customerCaused.totals.successRate = 23 / 25;
+customerCaused.totals.failedByResponsibility = { provider: 0, platform: 0, client: 0, customer: 2, unknown: 0 };
+const dailyPolicies = defaults.map((policy) =>
+  policy.metric === "operation_success_rate"
+    ? { ...policy, minimumSample: 20, windowMinutes: 1_440 }
+    : policy,
+);
+const customerCausedReliability = evaluateSignalOpsSloPoliciesV1({
+  snapshot: customerCaused,
+  policies: dailyPolicies,
+  now,
+}).find((evaluation) => evaluation.policy.metric === "operation_success_rate");
+assert.equal(customerCausedReliability?.status, "met");
+assert.equal(customerCausedReliability?.observedValue, 1);
+assert.equal(customerCausedReliability?.sampleSize, 23);
+assert.equal(
+  evaluateSignalOpsIncidentsV1(customerCaused, dailyPolicies).some(
+    (item) => item.metric === "slo:operation_success_rate",
+  ),
+  false,
+);
+
 // Display evaluation widens the window for low-volume tenants instead of hiding data.
 const bySampleRange = {
   "24h": { succeeded: 3, failed: 0, durations: 3 },
-  "7d": { succeeded: 25, failed: 0, durations: 25 },
+  "7d": { succeeded: 60, failed: 0, durations: 60 },
   "30d": { succeeded: 60, failed: 12, durations: 72 },
   "90d": { succeeded: 90, failed: 20, durations: 110 },
 };
@@ -120,7 +149,7 @@ const adaptiveBy = Object.fromEntries(adaptive.map((evaluation) => [evaluation.p
 assert.equal(adaptiveBy.operation_success_rate.evaluatedRange, "7d");
 assert.equal(adaptiveBy.operation_success_rate.status, "met");
 assert.equal(adaptiveBy.operation_success_rate.lowSample, false);
-assert.equal(adaptiveBy.operation_success_rate.sampleSize, 25);
+assert.equal(adaptiveBy.operation_success_rate.sampleSize, 60);
 assert.equal(adaptiveBy.operation_p95_duration_ms.evaluatedRange, "7d");
 assert.equal(
   adaptiveBy.failure_classification_coverage.evaluatedRange,
@@ -131,7 +160,7 @@ assert.equal(adaptiveBy.failure_classification_coverage.lowSample, true);
 assert.equal(adaptiveBy.failure_classification_coverage.status, "breached");
 assert.equal(adaptiveBy.signal_freshness_ms.status, "disabled");
 assert.ok(adaptive.every((evaluation) => evaluation.status !== "insufficient_data"));
-assert.deepEqual([...new Set(loadedRanges)], ["24h", "7d", "30d", "90d"]);
+assert.deepEqual([...new Set(loadedRanges)].sort(), ["24h", "30d", "7d", "90d"]);
 
 const emptyAdaptive = await evaluateSignalOpsSloPoliciesAdaptiveV1({
   policies: defaults.filter((policy) => policy.metric === "operation_success_rate"),
@@ -149,7 +178,40 @@ await evaluateSignalOpsSloPoliciesAdaptiveV1({
     return snapshot;
   },
 });
-assert.deepEqual(busyLoads, ["24h"], "A busy tenant must not load wider windows.");
+assert.deepEqual(busyLoads, ["7d"], "A busy tenant loads only the policy window.");
+
+// Incident evaluation judges each SLO on the snapshot that covers its own window.
+assert.equal(sloRangeForWindowV1(1_440), "24h");
+assert.equal(sloRangeForWindowV1(10_080), "7d");
+assert.equal(sloRangeForWindowV1(10_081), "30d");
+assert.equal(sloRangeForWindowV1(1_000_000), "90d");
+const reliabilityDefault = defaults.find((policy) => policy.metric === "operation_success_rate");
+assert.equal(reliabilityDefault.windowMinutes, 10_080);
+assert.equal(reliabilityDefault.minimumSample, 50);
+// A low-volume day with one provider failure (24 ok + 1) breaches nothing on its own...
+const quietDay = structuredClone(snapshot);
+quietDay.totals.succeeded = 24;
+quietDay.totals.failed = 1;
+quietDay.totals.failedByResponsibility = { provider: 1, platform: 0, client: 0, customer: 0, unknown: 0 };
+const quietWeek = structuredClone(quietDay);
+quietWeek.range = "7d";
+quietWeek.totals.succeeded = 172;
+quietWeek.totals.failed = 3;
+quietWeek.totals.failedByResponsibility = { provider: 1, platform: 0, client: 0, customer: 2, unknown: 0 };
+const reliabilityOnly = [reliabilityDefault];
+assert.equal(
+  evaluateSignalOpsIncidentsV1(quietDay, reliabilityOnly, new Map([["7d", quietWeek]])).length,
+  0,
+  "172/173 over seven days meets the objective.",
+);
+// ...while a week that really degrades still opens a critical incident.
+const badWeek = structuredClone(quietWeek);
+badWeek.totals.failed = 12;
+badWeek.totals.failedByResponsibility = { provider: 10, platform: 0, client: 0, customer: 2, unknown: 0 };
+const [badWeekDecision] = evaluateSignalOpsIncidentsV1(quietDay, reliabilityOnly, new Map([["7d", badWeek]]));
+assert.equal(badWeekDecision.metric, "slo:operation_success_rate");
+assert.equal(badWeekDecision.severity, "critical");
+assert.equal(badWeekDecision.evidence.sampleSize, 182);
 
 const configuredFreshness = await updateSignalOpsSloPolicyV1({
   tenantId,

@@ -7,7 +7,12 @@ import { createFileSignalOpsEventStoreV1 } from "../src/lib/signalops/v1/file-ev
 import {
   buildSignalOpsOpsSnapshotV1,
   effectiveProviderHealthV1,
+  operationReliabilityV1,
 } from "../src/lib/signalops/v1/ops-snapshot.ts";
+import {
+  defaultSignalOpsSloPoliciesV1,
+  evaluateSignalOpsSloPoliciesV1,
+} from "../src/lib/signalops/v1/slo.ts";
 
 const fixture = (name) => import(`../schemas/ai-telemetry/v1/fixtures/valid/${name}.json`, {
   with: { type: "json" },
@@ -385,6 +390,11 @@ assert.deepEqual(semanticsSnapshot.totals.failedByResponsibility, {
   unknown: 1,
 });
 assert.deepEqual(
+  operationReliabilityV1(semanticsSnapshot.totals),
+  { rate: 1 / 2, sampleSize: 2, excludedCustomerFailures: 1 },
+  "Reliability drops customer-caused failures from both numerator and denominator.",
+);
+assert.deepEqual(
   semanticsSnapshot.failureBreakdown.map((row) => row.category).sort(),
   ["content_policy", "unknown"],
 );
@@ -633,6 +643,71 @@ assert.deepEqual(
     },
   ],
   "Spend efficiency must attribute cost evidence to operation outcomes and separate retry money.",
+);
+
+// Reliability SLO regression (Sentry JAVASCRIPT-NUXT-GA, Oct 27 2026): a day where the only
+// failures are content-policy blocks the user caused must not breach "Operation reliability".
+const reliabilityNow = new Date("2026-10-27T23:00:00.000Z");
+const contentBlock = {
+  status: "failed",
+  failure: { category: "content_policy", responsibility: "customer", code: "content_policy", retryable: false },
+};
+function reliabilityWindow(outcomes) {
+  const events = outcomes.flatMap((outcome, index) => {
+    const id = `rel_${index}`;
+    const at = new Date(Date.parse("2026-10-27T01:00:00.000Z") + index * 60_000).toISOString();
+    return [...lifecycleOperation(id, at, outcome), lifecycleAttempt(id, at)];
+  });
+  const windowSnapshot = buildSignalOpsOpsSnapshotV1({
+    tenantId,
+    range: "24h",
+    now: reliabilityNow,
+    records: events.map((event, index) => ({
+      tenantId,
+      event,
+      payloadDigest: `reliability-${index}`,
+      receivedAt: event.time,
+    })),
+  });
+  const [evaluation] = evaluateSignalOpsSloPoliciesV1({
+    snapshot: windowSnapshot,
+    // Pinned to a 24h window so this checks the exclusion, not the default window.
+    policies: defaultSignalOpsSloPoliciesV1(tenantId)
+      .filter((policy) => policy.id === "slo_operation_success_rate")
+      .map((policy) => ({ ...policy, minimumSample: 20, windowMinutes: 1_440 })),
+    now: reliabilityNow,
+  });
+  return { windowSnapshot, evaluation };
+}
+const succeededOutcome = { status: "succeeded" };
+const customerOnly = reliabilityWindow([
+  ...Array.from({ length: 23 }, () => succeededOutcome),
+  contentBlock,
+  contentBlock,
+]);
+assert.equal(customerOnly.windowSnapshot.totals.successRate, 23 / 25, "Raw outcome rate is unchanged.");
+assert.equal(customerOnly.evaluation.status, "met");
+assert.equal(customerOnly.evaluation.observedValue, 1);
+assert.equal(customerOnly.evaluation.sampleSize, 23);
+
+const systemFailure = reliabilityWindow([
+  ...Array.from({ length: 22 }, () => succeededOutcome),
+  contentBlock,
+  {
+    status: "failed",
+    failure: { category: "provider", responsibility: "provider", code: "provider_failure", retryable: true },
+  },
+  {
+    status: "failed",
+    failure: { category: "unknown", responsibility: "unknown" },
+  },
+]);
+assert.equal(systemFailure.evaluation.sampleSize, 24);
+assert.equal(systemFailure.evaluation.observedValue, 22 / 24);
+assert.equal(
+  systemFailure.evaluation.severity,
+  "critical",
+  "Provider and unattributed failures still count against reliability.",
 );
 
 console.log("signalops ops v1 checks passed");

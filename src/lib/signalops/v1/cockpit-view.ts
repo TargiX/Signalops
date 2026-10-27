@@ -6,7 +6,11 @@ import type {
   SignalOpsProviderSnapshotV1,
   SignalOpsTimelineBucketV1,
 } from "./ops-snapshot.ts";
-import { effectiveProviderHealthV1, isFailedOperationStatusV1 } from "./ops-snapshot.ts";
+import {
+  effectiveProviderHealthV1,
+  isFailedOperationStatusV1,
+  operationReliabilityV1,
+} from "./ops-snapshot.ts";
 
 const SIGNALOPS_COCKPIT_RANGES_V1 = new Set<SignalOpsOpsRangeV1>([
   "24h",
@@ -756,6 +760,7 @@ export function buildSignalOpsCockpitBriefV1(
       : snapshot.totals.operationsWithAttemptTelemetry /
         snapshot.totals.operations;
   const costCoverage = snapshot.coverage.operationCostEvidence;
+  const reliability = operationReliabilityV1(snapshot.totals);
 
   return [
     "# SignalOps investigation brief",
@@ -766,6 +771,7 @@ export function buildSignalOpsCockpitBriefV1(
     `- Operations: ${snapshot.totals.operations}`,
     `- Failed: ${snapshot.totals.failed}`,
     `- Success rate: ${percentTextV1(snapshot.totals.successRate)}`,
+    `- Reliability (excludes ${reliability.excludedCustomerFailures} customer-caused failures): ${percentTextV1(reliability.rate)}`,
     `- Operation p95: ${durationTextV1(snapshot.totals.p95DurationMs)}`,
     `- Explicit attempt coverage: ${percentTextV1(attemptCoverage)}`,
     `- Failure classification coverage: ${percentTextV1(snapshot.coverage.failureClassification.ratio)}`,
