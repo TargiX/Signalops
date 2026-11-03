@@ -16,15 +16,29 @@ SignalOps does not reroute traffic, pause a provider, or mutate a customer workl
 
 | Policy | Objective | Warning | Critical | Minimum sample | Default |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Operation reliability | >= 99% | < 98% | < 95% | 20 terminal operations | enabled |
+| Operation reliability | >= 99% | < 98% | < 95% | 50 terminal operations | enabled |
 | Operation p95 latency | <= 60s | > 120s | > 300s | 20 measured durations | enabled |
 | Provider attempt coverage | >= 95% | < 90% | < 75% | 20 operations | enabled |
 | Failure classification coverage | >= 95% | < 90% | < 75% | 5 failed operations | enabled |
 | Signal freshness | <= 5m | > 15m | > 60m | first received signal | disabled |
 
 Signal freshness is disabled by default because silence is not an outage until a tenant declares an
-expected traffic cadence. A policy below its minimum sample is `insufficient_data`; it never opens
-an incident.
+expected traffic cadence. In incident evaluation, a policy below its minimum sample is
+`insufficient_data` and never opens an incident; the evaluator uses the snapshot that covers the
+policy window and never widens it.
+
+Operation reliability is judged over a rolling 7-day window (10,080 minutes) with a 50-operation
+minimum sample: a 99% objective cannot be told apart from 95% on a few dozen operations, so at ~25
+operations a day one provider failure would already read as a warning. Customer-caused failures
+(content policy, invalid input) are excluded from its sample on both sides of the ratio;
+`totals.successRate` keeps the raw outcome rate. Reconciliation delta ratio also spans 7 days;
+every other policy evaluates 24 hours (signal freshness 60 minutes). The incident evaluator judges
+each enabled SLO on the snapshot that covers its own evaluation window (`sloRangeForWindowV1`);
+provider, telemetry and capacity decisions always read the 24-hour snapshot. Cockpit display
+evaluation widens the window until the minimum sample is met instead of hiding data; if no window
+reaches the minimum sample, it judges the widest populated window with `lowSample: true`, which can
+still read `met` or `breached`. That widening is display-only and never opens or resolves an
+incident.
 
 Latency sample size counts only operations with measured or derivable durations. Catalog prices,
 logical model labels, and inferred provider routes are never used as evidence for these policies.
@@ -32,7 +46,10 @@ logical model labels, and inferred provider routes are never used as evidence fo
 ## Tenant configuration
 
 Defaults are materialized for existing active tenants and remain available as code defaults for new
-tenants. An owner can change thresholds, minimum sample, or enabled state through `PATCH /v1/slos`.
+tenants. When a shipped default changes, a migration updates materialized rows still holding the
+untouched default policy version, and the provisioning function is replaced, so persisted
+configuration matches this specification. An owner can change thresholds, minimum sample, or
+enabled state through `PATCH /v1/slos`.
 Every change creates a new policy version and an audit event. Comparator, metric, and evaluation
 window are not mutable in V1, preventing a configuration label from diverging from the projector.
 
