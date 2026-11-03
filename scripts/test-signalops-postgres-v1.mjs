@@ -225,13 +225,17 @@ try {
     assert.equal(defaultPolicies.rows[0].count, 5);
 
     const reliabilityDefault = await client.query(
-      `select minimum_sample, window_minutes
+      `select version, minimum_sample, window_minutes
        from public.signalops_v1_slo_policies
        where tenant_id = $1 and id = 'slo_operation_success_rate'`,
       [selfServeTenantId],
     );
     assert.deepEqual(reliabilityDefault.rows, [
-      { minimum_sample: 50, window_minutes: 10080 },
+      {
+        version: "operation-reliability-7d-2026-10-27",
+        minimum_sample: 50,
+        window_minutes: 10080,
+      },
     ]);
 
     const issued = await client.query(

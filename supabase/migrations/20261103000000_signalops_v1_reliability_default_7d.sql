@@ -1,15 +1,21 @@
 -- Operation reliability default: 50 operations over a rolling 7-day window.
--- The code default in src/lib/signalops/v1/slo.ts already uses 50 / 10,080, but rows
--- materialized by 20260824011500 and 20260824050000 still hold the original 20 / 1,440,
--- and stored rows override the code fallback at read time. Match the persisted default
--- to the shipped one. Only untouched legacy default rows are updated: a tenant change
--- via PATCH /v1/slos rewrites the policy version to tenant-policy-*, so the
--- version-scoped predicate preserves tenant-customized values. The provisioning
--- function is replaced so new tenants are materialized with the shipped default too.
--- This is a system default correction, not an operator policy change: no audit event.
+-- The code default in src/lib/signalops/v1/slo.ts already uses 50 / 10,080 under policy
+-- version operation-reliability-7d-2026-10-27, but rows materialized by 20260824011500 and
+-- 20260824050000 still hold the original 20 / 1,440, and stored rows override the code
+-- fallback at read time. Match the persisted default to the shipped one, including the
+-- version label: incident identity is (tenant, metric, route scope, policy version), so
+-- migrating 20/24h rows to the 50/7d rule under the old version would let incident sync
+-- reuse the old incident and mute the opening alert for the revised rule. The new version
+-- gives the revised rule its own incident lifecycle. Only untouched legacy default rows are
+-- updated: a tenant change via PATCH /v1/slos rewrites the policy version to
+-- tenant-policy-*, so the version-scoped predicate preserves tenant-customized values. The
+-- provisioning function is replaced so new tenants are materialized with the shipped
+-- default and version too. This is a system default correction, not an operator policy
+-- change: no audit event.
 
 update public.signalops_v1_slo_policies
-set minimum_sample = 50,
+set version = 'operation-reliability-7d-2026-10-27',
+    minimum_sample = 50,
     window_minutes = 10080
 where id = 'slo_operation_success_rate'
   and version = 'operation-reliability-2026-08-24'
@@ -99,7 +105,7 @@ begin
     p_subject
   from (
     values
-      ('slo_operation_success_rate', 'operation-reliability-2026-08-24', 'Operation reliability', 'Terminal AI operations that complete successfully.', 'operation_success_rate', 'gte', 0.99::double precision, 0.98::double precision, 0.95::double precision, 50, 10080, true),
+      ('slo_operation_success_rate', 'operation-reliability-7d-2026-10-27', 'Operation reliability', 'Terminal AI operations that complete successfully.', 'operation_success_rate', 'gte', 0.99::double precision, 0.98::double precision, 0.95::double precision, 50, 10080, true),
       ('slo_operation_p95_duration', 'operation-latency-2026-08-24', 'Operation latency', 'End-to-end p95 duration for terminal AI operations.', 'operation_p95_duration_ms', 'lte', 60000::double precision, 120000::double precision, 300000::double precision, 20, 1440, true),
       ('slo_provider_attempt_coverage', 'attempt-coverage-2026-08-24', 'Provider attempt coverage', 'Operations with explicit provider attempt telemetry.', 'provider_attempt_coverage', 'gte', 0.95::double precision, 0.90::double precision, 0.75::double precision, 20, 1440, true),
       ('slo_failure_classification_coverage', 'failure-taxonomy-2026-08-24', 'Failure classification coverage', 'Failed operations with a normalized failure category.', 'failure_classification_coverage', 'gte', 0.95::double precision, 0.90::double precision, 0.75::double precision, 5, 1440, true),
