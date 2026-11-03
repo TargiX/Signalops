@@ -16,7 +16,7 @@ SignalOps does not reroute traffic, pause a provider, or mutate a customer workl
 
 | Policy | Objective | Warning | Critical | Minimum sample | Default |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Operation reliability | >= 99% | < 98% | < 95% | 20 terminal operations | enabled |
+| Operation reliability | >= 99% | < 98% | < 95% | 50 terminal operations | enabled |
 | Operation p95 latency | <= 60s | > 120s | > 300s | 20 measured durations | enabled |
 | Provider attempt coverage | >= 95% | < 90% | < 75% | 20 operations | enabled |
 | Failure classification coverage | >= 95% | < 90% | < 75% | 5 failed operations | enabled |
@@ -25,6 +25,16 @@ SignalOps does not reroute traffic, pause a provider, or mutate a customer workl
 Signal freshness is disabled by default because silence is not an outage until a tenant declares an
 expected traffic cadence. A policy below its minimum sample is `insufficient_data`; it never opens
 an incident.
+
+Operation reliability is judged over a rolling 7-day window (10,080 minutes) with a 50-operation
+minimum sample: a 99% objective cannot be told apart from 95% on a few dozen operations, so at ~25
+operations a day one provider failure would already read as a warning. Customer-caused failures
+(content policy, invalid input) are excluded from its sample on both sides of the ratio;
+`totals.successRate` keeps the raw outcome rate. Reconciliation delta ratio also spans 7 days;
+every other policy evaluates 24 hours (signal freshness 60 minutes). The incident evaluator judges
+each enabled SLO on the snapshot that covers its own evaluation window (`sloRangeForWindowV1`);
+provider, telemetry and capacity decisions always read the 24-hour snapshot. Cockpit display
+evaluation widens the window until the minimum sample is met instead of hiding data.
 
 Latency sample size counts only operations with measured or derivable durations. Catalog prices,
 logical model labels, and inferred provider routes are never used as evidence for these policies.
