@@ -53,8 +53,11 @@ workspace password, session secret, and ingest token before testing live mode.
 - `/onboarding` creates a Supabase-backed account, isolated workspace, and one-time managed ingest
   credential when public signup is enabled.
 - `/settings` lets workspace owners create, rotate, and revoke digest-only ingest credentials.
-- `/docs`, `/pricing`, `/security`, `/privacy`, `/terms`, `/contact`, and `/status` are public
-  product routes with no synthetic customer or certification claims.
+- `/docs`, `/pricing`, `/security`, `/privacy`, `/terms`, `/contact`, `/status`, and `/validate`
+  are public product routes with no synthetic customer or certification claims.
+- `/validate` is the public playground for the v0 event contract: load a sample batch or paste
+  JSON, run it through `POST /api/events/validate` (public verification only, zero storage), and
+  optionally exercise the protected dev ingest seam to inspect a real receipt.
 - `/cockpit?mode=demo` is the synthetic routing/incident demonstration.
 - `POST /v1/events` accepts canonical AI telemetry using a tenant Bearer credential.
 - `POST /v1/events/validate` validates the same contract without storing it.
@@ -163,6 +166,10 @@ Each step also surfaces a short "technical proof" line calling out what it exerc
 - `/incidents/inc_411` opens the synthetic incident investigation route.
 - `/incidents/inc_<canonical fingerprint>` opens a tenant-scoped live incident with measured
   evidence, acknowledgement ownership, and recovery history.
+- `/validate` opens the public event validator playground for the v0 event contract.
+- `/consumers/<id>` opens the synthetic consumer drill-down linked from the demo dashboard:
+  account-level KPIs, operations, and a local spend-ceiling guard preview that never changes
+  billing, credits, or server-side policy.
 
 ## Portfolio Notes
 
