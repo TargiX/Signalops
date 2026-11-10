@@ -66,6 +66,7 @@ import {
   replayUrlStateMatches,
 } from "@/lib/replay-url";
 import { dispatchCsvDownload } from "@/lib/csv-download";
+import { resolveReplayRoutingReconcile } from "@/lib/replay-routing";
 import {
   captureProductEvent,
   captureProductException,
@@ -585,22 +586,16 @@ export function Dashboard() {
       return;
     }
 
-    const scenario = replayScenarios.find(
-      (item) => item.id === replayScenarioId,
-    );
-    const boundedIndex = scenario
-      ? Math.max(0, Math.min(replayStepIndex, scenario.steps.length - 1))
-      : 0;
-    const step = scenario?.steps[boundedIndex];
-    const routingKey = scenario ? `${range}:${scenario.id}:${boundedIndex}` : null;
+    const decision = resolveReplayRoutingReconcile({
+      scenarios: replayScenarios,
+      scenarioId: replayScenarioId,
+      stepIndex: replayStepIndex,
+      range,
+      appliedKey: replayRoutingAppliedKey.current,
+    });
 
-    if (
-      scenario &&
-      step &&
-      routingKey !== replayRoutingAppliedKey.current &&
-      setReplayRoutingRule(scenario, step)
-    ) {
-      replayRoutingAppliedKey.current = routingKey;
+    if (decision && setReplayRoutingRule(decision.scenario, decision.step)) {
+      replayRoutingAppliedKey.current = decision.routingKey;
     }
     // Reconcile each range/scenario/step once after its snapshot arrives.
     // eslint-disable-next-line react-hooks/exhaustive-deps
