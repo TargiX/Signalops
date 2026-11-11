@@ -268,7 +268,12 @@ assert.match(
 );
 assert.match(
   dashboardSource,
-  /routingKey !== replayRoutingAppliedKey\.current[\s\S]*?setReplayRoutingRule\(scenario, step\)[\s\S]*?replayRoutingAppliedKey\.current = routingKey/,
+  /const decision = resolveReplayRoutingReconcile\(\{[\s\S]*?appliedKey: replayRoutingAppliedKey\.current,[\s\S]*?\}\);/,
+  "Expected each resolved range/scenario/step to be reconciled through the pure routing decision.",
+);
+assert.match(
+  dashboardSource,
+  /if \(decision && setReplayRoutingRule\(decision\.scenario, decision\.step\)\) \{[\s\S]*?replayRoutingAppliedKey\.current = decision\.routingKey;/,
   "Expected each resolved range/scenario/step to apply routing exactly once.",
 );
 assert.match(
