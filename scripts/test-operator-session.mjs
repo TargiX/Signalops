@@ -81,6 +81,13 @@ await withEnv(passwordEnv, async () => {
   assert.deepEqual(await listAuthorizedSignalOpsMembershipsV1(session), [
     { tenantId: "acme", tenantName: "Acme Workspace", role: "owner" },
   ]);
+
+  // A well-formed token with a broken signature authorizes nobody: the gate must verify
+  // signatures, not just parse the payload.
+  const [payload, signature] = token.split(".");
+  const tamperedToken = `${payload}.${"k".repeat(signature.length)}`;
+  assert.notEqual(tamperedToken, token);
+  assert.equal(await authorizeSignalOpsOperatorSessionV1(requestWithSessionCookie(tamperedToken)), null);
 });
 
 await withEnv({ ...passwordEnv, SIGNALOPS_COCKPIT_PASSWORD: undefined }, async () => {
